@@ -2,7 +2,7 @@
 
 FloatChat is a web application for analyzing and visualizing ARGO oceanographic data using AI-powered search and analysis capabilities.
 
-## 🚀 Quick Start
+## Quick Start
 
 Want to get up and running quickly? Follow these steps:
 
@@ -12,16 +12,8 @@ Want to get up and running quickly? Follow these steps:
 4. **Setup Database**: Run the database setup script
 5. **Start Servers**: Launch both backend and frontend
 
-Detailed instructions below ⬇️
+Detailed instructions below:
 
-## Project Structure```
-floatchat/
-├── apps/
-│   ├── client/          # React + TypeScript frontend
-│   └── server/          # FastAPI backend with PostgreSQL
-├── test_indian_argo.nc  # Sample NetCDF data file
-└── README.md
-```
 
 ## Prerequisites
 
