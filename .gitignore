@@ -96,3 +96,6 @@ dmypy.json
 # ChromaDB
 chroma_db/
 .chroma/
+chroma_data/
+**/chroma_data/
+apps/server/src/chroma_data/
