@@ -1,0 +1,12 @@
+fastapi
+uvicorn[standard]
+sqlalchemy
+psycopg2-binary
+chromadb
+python-multipart
+netcdf4
+xarray
+numpy
+pandas
+python-dotenv
+pydantic

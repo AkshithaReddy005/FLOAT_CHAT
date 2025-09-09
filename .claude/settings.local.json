@@ -7,7 +7,15 @@
       "Bash(npm install:*)",
       "Bash(python:*)",
       "Bash(venv/Scripts/activate:*)",
-      "Bash(pip install:*)"
+      "Bash(pip install:*)",
+      "Bash(venvScripts:*)",
+      "Bash(npm run dev:*)",
+      "Bash(find:*)",
+      "Bash(PYTHONPATH=src python src/main.py)",
+      "Bash(tasklist:*)",
+      "Bash(PYTHONPATH=src python src/app.py)",
+      "Bash(curl:*)",
+      "Bash(.venvScriptsactivate)"
     ],
     "deny": [],
     "ask": []
