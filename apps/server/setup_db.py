@@ -94,8 +94,8 @@ if __name__ == "__main__":
     print("=== FloatChat Database Setup ===")
     success = setup_database()
     if success:
-        print("✅ Database setup completed successfully!")
+        print("Database setup completed successfully!")
         print("You can now start the server with: python src/main.py")
     else:
-        print("❌ Database setup failed!")
+        print("Database setup failed!")
         print("Please ensure PostgreSQL is running and the connection parameters are correct.")

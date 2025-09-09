@@ -15,7 +15,9 @@
       "Bash(tasklist:*)",
       "Bash(PYTHONPATH=src python src/app.py)",
       "Bash(curl:*)",
-      "Bash(.venvScriptsactivate)"
+      "Bash(.venvScriptsactivate)",
+      "WebFetch(domain:downloads.psl.noaa.gov)",
+      "Bash(taskkill:*)"
     ],
     "deny": [],
     "ask": []

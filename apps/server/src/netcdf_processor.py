@@ -11,7 +11,7 @@ class NetCDFProcessor:
         """Process ARGO NetCDF file and extract measurements using xarray"""
         try:
             # Load the NetCDF file using xarray
-            ds = xr.open_dataset(file_path)
+            ds = xr.open_dataset(file_path, decode_times=False)
             
             print(f"Available dimensions: {list(ds.dims.keys())}")
             print(f"Available variables: {list(ds.data_vars.keys())}")
@@ -63,11 +63,32 @@ class NetCDFProcessor:
             
             if time_data is not None:
                 try:
-                    # Try to convert time to datetime
-                    if hasattr(time_data, 'values'):
-                        time_array = pd.to_datetime(time_data.values, errors='coerce')
+                    # Handle time data with proper reference date
+                    time_values = time_data.values
+                    
+                    # Check for time units
+                    if hasattr(time_data, 'units'):
+                        units = time_data.units
+                        if 'days since' in units:
+                            ref_date_str = units.split('days since ')[1].strip()
+                            if ref_date_str.startswith('0000-01-01'):
+                                # Use more reasonable reference date for problematic files
+                                reference_date = datetime(1900, 1, 1)
+                            else:
+                                try:
+                                    if 'UTC' in ref_date_str:
+                                        ref_date_str = ref_date_str.replace(' UTC', '')
+                                    reference_date = datetime.strptime(ref_date_str, '%Y-%m-%d %H:%M:%S')
+                                except ValueError:
+                                    reference_date = datetime(1950, 1, 1)
+                            
+                            # Convert days to datetime
+                            time_array = np.array([reference_date + pd.Timedelta(days=float(val)) 
+                                                 for val in time_values])
+                        else:
+                            time_array = pd.to_datetime(time_values, errors='coerce')
                     else:
-                        time_array = np.array([datetime.now()])
+                        time_array = pd.to_datetime(time_values, errors='coerce')
                 except:
                     time_array = np.array([datetime.now()])
             else:
@@ -170,7 +191,7 @@ class NetCDFProcessor:
     def validate_file(file_path: str) -> bool:
         """Validate if file is a proper NetCDF file using xarray"""
         try:
-            ds = xr.open_dataset(file_path)
+            ds = xr.open_dataset(file_path, decode_times=False)
             # Check if we can open it and it has some data variables
             has_data = len(ds.data_vars) > 0
             ds.close()
