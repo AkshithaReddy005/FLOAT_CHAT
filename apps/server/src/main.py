@@ -1,14 +1,16 @@
 from fastapi import FastAPI, UploadFile, File, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError
 from pydantic import BaseModel
 import os
 import tempfile
 import time
+import hashlib
 from typing import List
 from dotenv import load_dotenv
 
-from database import get_db, create_tables, ArgoMeasurement
+from database import get_db, create_tables, ArgoMeasurement, UploadedFile
 from vector_store import VectorStore
 from netcdf_processor import NetCDFProcessor
 
@@ -76,7 +78,7 @@ def read_root():
 
 @app.post("/admin/upload")
 async def upload_file(file: UploadFile = File(...), db: Session = Depends(get_db)):
-    """Admin endpoint to upload ARGO NetCDF files"""
+    """Admin endpoint to upload ARGO NetCDF files with duplicate detection"""
     
     temp_file_path = None
     try:
@@ -84,9 +86,24 @@ async def upload_file(file: UploadFile = File(...), db: Session = Depends(get_db
         if not file.filename or not file.filename.endswith(('.nc', '.netcdf')):
             raise HTTPException(status_code=400, detail="Invalid file format. Only NetCDF files are allowed.")
         
+        # Read file content and calculate hash
+        content = await file.read()
+        file_hash = hashlib.sha256(content).hexdigest()
+        file_size = len(content)
+        
+        # Check if this exact file has been uploaded before
+        existing_file = db.query(UploadedFile).filter(UploadedFile.file_hash == file_hash).first()
+        if existing_file:
+            return {
+                "message": f"File '{file.filename}' has already been uploaded on {existing_file.upload_date}. No new data added.",
+                "measurements_count": 0,
+                "existing_measurements": existing_file.measurements_count,
+                "status": "duplicate_file",
+                "original_upload_date": existing_file.upload_date.isoformat()
+            }
+        
         # Create temporary file
         with tempfile.NamedTemporaryFile(delete=False, suffix='.nc') as temp_file:
-            content = await file.read()
             temp_file.write(content)
             temp_file.flush()  # Ensure data is written to disk
             temp_file_path = temp_file.name
@@ -101,22 +118,89 @@ async def upload_file(file: UploadFile = File(...), db: Session = Depends(get_db
         if not measurements:
             raise HTTPException(status_code=400, detail="No valid measurements found in file.")
         
-        # Store in PostgreSQL
-        db_measurements = []
+        # Add file hash and measurement hash to each measurement
         for measurement in measurements:
-            db_measurement = ArgoMeasurement(**measurement)
-            db_measurements.append(db_measurement)
+            measurement['file_hash'] = file_hash
+            measurement['measurement_hash'] = ArgoMeasurement.generate_measurement_hash(
+                measurement['float_id'],
+                measurement['latitude'],
+                measurement['longitude'],
+                measurement['date'],
+                measurement['depth']
+            )
         
-        db.add_all(db_measurements)
+        # Store in PostgreSQL with duplicate detection
+        db_measurements = []
+        new_measurements_count = 0
+        duplicate_measurements_count = 0
+        
+        for measurement in measurements:
+            try:
+                # Check if this exact measurement already exists
+                existing_measurement = db.query(ArgoMeasurement).filter(
+                    ArgoMeasurement.measurement_hash == measurement['measurement_hash']
+                ).first()
+                
+                if existing_measurement:
+                    duplicate_measurements_count += 1
+                    continue
+                
+                db_measurement = ArgoMeasurement(**measurement)
+                db_measurements.append(db_measurement)
+                new_measurements_count += 1
+                
+            except Exception as e:
+                print(f"Error processing measurement: {e}")
+                continue
+        
+        # Add new measurements to database
+        if db_measurements:
+            try:
+                db.add_all(db_measurements)
+                db.commit()
+            except IntegrityError as e:
+                db.rollback()
+                # Handle potential race conditions with unique constraints
+                print(f"Integrity error (likely duplicate): {e}")
+                # Re-count actual new measurements
+                new_measurements_count = len([m for m in measurements 
+                                            if not db.query(ArgoMeasurement).filter(
+                                                ArgoMeasurement.measurement_hash == m['measurement_hash']
+                                            ).first()])
+        
+        # Store in ChromaDB with duplicate detection
+        vector_results = vector_store.add_measurements(measurements, file_hash)
+        
+        # Record the uploaded file
+        uploaded_file = UploadedFile(
+            filename=file.filename,
+            file_hash=file_hash,
+            file_size=file_size,
+            measurements_count=new_measurements_count
+        )
+        db.add(uploaded_file)
         db.commit()
         
-        # Store in ChromaDB
-        vector_store.add_measurements(measurements)
+        # Prepare response message
+        total_processed = len(measurements)
+        message_parts = [f"Successfully processed {total_processed} measurements from file"]
+        
+        if new_measurements_count > 0:
+            message_parts.append(f"{new_measurements_count} new measurements added")
+        
+        if duplicate_measurements_count > 0:
+            message_parts.append(f"{duplicate_measurements_count} duplicate measurements skipped")
+        
+        if vector_results.get('duplicates_skipped', 0) > 0:
+            message_parts.append(f"{vector_results['duplicates_skipped']} vector duplicates skipped")
         
         return {
-            "message": f"Successfully processed {len(measurements)} measurements",
-            "measurements_count": len(measurements),
-            "status": "completed"
+            "message": ". ".join(message_parts) + ".",
+            "measurements_count": new_measurements_count,
+            "duplicate_measurements": duplicate_measurements_count,
+            "total_in_file": total_processed,
+            "vector_stats": vector_results,
+            "status": "completed" if new_measurements_count > 0 else "all_duplicates"
         }
             
     except HTTPException:
@@ -198,12 +282,70 @@ def get_stats(db: Session = Depends(get_db)):
     """Get system statistics for admin"""
     total_measurements = db.query(ArgoMeasurement).count()
     unique_floats = db.query(ArgoMeasurement.float_id).distinct().count()
+    total_files = db.query(UploadedFile).count()
+    
+    # Get latest upload
+    latest_upload = db.query(UploadedFile).order_by(UploadedFile.upload_date.desc()).first()
+    
+    # Get vector store stats
+    vector_stats = vector_store.get_collection_stats()
     
     return {
         "total_measurements": total_measurements,
         "unique_floats": unique_floats,
+        "total_files_uploaded": total_files,
+        "latest_upload": {
+            "filename": latest_upload.filename if latest_upload else None,
+            "upload_date": latest_upload.upload_date.isoformat() if latest_upload else None,
+            "measurements_count": latest_upload.measurements_count if latest_upload else 0
+        } if latest_upload else None,
+        "vector_store": vector_stats,
         "status": "active"
     }
+
+@app.get("/admin/files")
+def get_uploaded_files(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
+    """Get list of uploaded files for admin monitoring"""
+    files = db.query(UploadedFile).order_by(UploadedFile.upload_date.desc()).offset(skip).limit(limit).all()
+    
+    return {
+        "files": [
+            {
+                "id": file.id,
+                "filename": file.filename,
+                "file_hash": file.file_hash[:16] + "...",  # Show partial hash for identification
+                "file_size": file.file_size,
+                "upload_date": file.upload_date.isoformat(),
+                "measurements_count": file.measurements_count
+            }
+            for file in files
+        ],
+        "total_files": db.query(UploadedFile).count()
+    }
+
+@app.delete("/admin/chroma/clear")
+def clear_chroma_database():
+    """Clear all data from ChromaDB vector store (admin only)"""
+    try:
+        # Get stats before clearing
+        stats_before = vector_store.get_collection_stats()
+        measurements_before = stats_before.get('total_measurements', 0)
+        
+        # Clear the vector store
+        vector_store.clear_all()
+        
+        # Get stats after clearing
+        stats_after = vector_store.get_collection_stats()
+        measurements_after = stats_after.get('total_measurements', 0)
+        
+        return {
+            "message": f"ChromaDB cleared successfully. Removed {measurements_before} measurements.",
+            "measurements_before": measurements_before,
+            "measurements_after": measurements_after,
+            "status": "cleared"
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to clear ChromaDB: {str(e)}")
 
 if __name__ == "__main__":
     import uvicorn

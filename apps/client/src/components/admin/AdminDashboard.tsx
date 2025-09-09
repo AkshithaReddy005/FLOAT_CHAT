@@ -3,7 +3,7 @@ import { FileUpload } from './FileUpload';
 import { useUpload } from '../../hooks/useUpload';
 
 export const AdminDashboard = () => {
-  const { status, uploadFile } = useUpload();
+  const { status, uploadFile, uploadDetails, isUploading } = useUpload();
 
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -14,7 +14,12 @@ export const AdminDashboard = () => {
 
   return (
     <Layout title="Admin Dashboard">
-      <FileUpload onFileChange={handleFileChange} status={status} />
+      <FileUpload 
+        onFileChange={handleFileChange} 
+        status={status} 
+        uploadDetails={uploadDetails}
+        isUploading={isUploading}
+      />
     </Layout>
   );
 };

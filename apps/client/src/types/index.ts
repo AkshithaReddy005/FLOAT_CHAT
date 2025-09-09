@@ -17,6 +17,15 @@ export interface QueryResponse {
 export interface UploadResponse {
   message: string;
   measurements_count: number;
+  duplicate_measurements?: number;
+  total_in_file?: number;
+  existing_measurements?: number;
+  original_upload_date?: string;
+  vector_stats?: {
+    new_measurements: number;
+    duplicates_skipped: number;
+    total_processed: number;
+  };
   status: string;
 }
 
