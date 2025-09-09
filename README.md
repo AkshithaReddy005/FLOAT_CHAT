@@ -221,19 +221,12 @@ This will check:
 
 #### Server (.env)
 ```bash
-# Database Configuration
-DB_HOST=localhost                    # PostgreSQL host
-DB_PORT=5432                        # PostgreSQL port
-DB_USER=postgres                    # PostgreSQL username
-DB_PASSWORD=your_password_here      # PostgreSQL password
-DB_NAME=floatchat                   # Database name
-
-# Server Configuration  
-BACKEND_HOST=127.0.0.1             # Backend server host
-BACKEND_PORT=8000                  # Backend server port
-
-# Vector Store
-CHROMA_PERSIST_DIR=./chroma_data   # ChromaDB data directory
+DATABASE_URL=postgresql://username:password@localhost:5432/db_name
+CHROMA_PERSIST_DIR=./chroma_data
+BACKEND_HOST=127.0.0.1
+BACKEND_PORT=8000
+FRONTEND_HOST=localhost
+FRONTEND_PORT=3000
 ```
 
 #### Client (.env)
