@@ -13,17 +13,8 @@ export const ResearcherDashboard = () => {
   };
 
   return (
-    <Layout title="Researcher Dashboard">
-      <div className="space-y-6">
-        <div className="text-center sm:text-left">
-          <h2 className="text-xl sm:text-2xl font-semibold text-gray-900 mb-2">
-            Query ARGO Data
-          </h2>
-          <p className="text-sm text-gray-600">
-            Search and analyze ocean data from ARGO floats worldwide
-          </p>
-        </div>
-        
+    <Layout title="Research Portal">
+      <div className="space-y-8">
         <SearchInput
           query={query}
           onQueryChange={setQuery}

@@ -1,25 +1,18 @@
-import { useState } from 'react';
+import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
 import { LoginScreen } from './components/common/LoginScreen';
 import { AdminDashboard } from './components/admin/AdminDashboard';
 import { ResearcherDashboard } from './components/researcher/ResearcherDashboard';
-import type { UserType } from './types';
 
 function App() {
-  const [userType, setUserType] = useState<UserType>(null);
-
-  if (!userType) {
-    return <LoginScreen onSelectUserType={setUserType} />;
-  }
-
-  if (userType === 'admin') {
-    return <AdminDashboard />;
-  }
-
-  if (userType === 'researcher') {
-    return <ResearcherDashboard />;
-  }
-
-  return null;
+  return (
+    <Router>
+      <Routes>
+        <Route path="/" element={<LoginScreen />} />
+        <Route path="/admin/dashboard" element={<AdminDashboard />} />
+        <Route path="/user/chat" element={<ResearcherDashboard />} />
+      </Routes>
+    </Router>
+  );
 }
 
 export default App

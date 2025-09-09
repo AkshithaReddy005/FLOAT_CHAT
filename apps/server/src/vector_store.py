@@ -122,5 +122,40 @@ class VectorStore:
     
     def clear_all(self):
         """Clear all data from vector store"""
-        self.client.delete_collection("argo_data")
+        try:
+            # First try to delete the collection
+            self.client.delete_collection("argo_data")
+        except Exception as e:
+            # Collection might not exist, which is fine
+            print(f"Warning: Could not delete collection 'argo_data': {e}")
+            pass
+        
+        # Create fresh collection
+        self.collection = self.client.get_or_create_collection("argo_data")
+        
+        # Verify the collection is empty
+        try:
+            count = self.collection.count()
+            if count > 0:
+                print(f"Warning: Collection still contains {count} items after clearing")
+                # Try to clear by getting all IDs and deleting them
+                all_items = self.collection.get(limit=None)  # Get all items
+                if all_items['ids']:
+                    self.collection.delete(ids=all_items['ids'])
+                    print(f"Manually deleted {len(all_items['ids'])} remaining items")
+        except Exception as e:
+            print(f"Warning: Could not verify collection clearing: {e}")
+            pass
+        
+    def reinitialize(self):
+        """Reinitialize the vector store with fresh connections"""
+        try:
+            # Close existing client if possible
+            if hasattr(self, 'client'):
+                del self.client
+        except Exception:
+            pass
+            
+        # Create fresh client and collection
+        self.client = chromadb.PersistentClient(path=self.persist_dir)
         self.collection = self.client.get_or_create_collection("argo_data")

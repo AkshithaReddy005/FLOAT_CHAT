@@ -44,6 +44,36 @@ class ApiService {
       body: JSON.stringify({ query }),
     });
   }
+
+  async reinitializeConnections(): Promise<any> {
+    return this.makeRequest<any>('/admin/reinitialize', {
+      method: 'POST',
+    });
+  }
+
+  async clearChromaDB(): Promise<any> {
+    return this.makeRequest<any>('/admin/chroma/clear', {
+      method: 'DELETE',
+    });
+  }
+
+  async clearPostgreSQL(): Promise<any> {
+    return this.makeRequest<any>('/admin/postgres/clear', {
+      method: 'DELETE',
+    });
+  }
+
+  async clearAllDatabases(): Promise<any> {
+    return this.makeRequest<any>('/admin/databases/clear', {
+      method: 'DELETE',
+    });
+  }
+
+  async getStats(): Promise<any> {
+    return this.makeRequest<any>('/admin/stats', {
+      method: 'GET',
+    });
+  }
 }
 
 export const apiService = new ApiService();

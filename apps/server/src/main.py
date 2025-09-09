@@ -347,6 +347,99 @@ def clear_chroma_database():
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to clear ChromaDB: {str(e)}")
 
+@app.delete("/admin/postgres/clear")
+def clear_postgres_database(db: Session = Depends(get_db)):
+    """Clear all data from PostgreSQL database (admin only)"""
+    try:
+        # Get stats before clearing
+        measurements_before = db.query(ArgoMeasurement).count()
+        files_before = db.query(UploadedFile).count()
+        
+        # Clear all data
+        db.query(ArgoMeasurement).delete()
+        db.query(UploadedFile).delete()
+        db.commit()
+        
+        # Get stats after clearing
+        measurements_after = db.query(ArgoMeasurement).count()
+        files_after = db.query(UploadedFile).count()
+        
+        return {
+            "message": f"PostgreSQL cleared successfully. Removed {measurements_before} measurements and {files_before} files.",
+            "measurements_before": measurements_before,
+            "measurements_after": measurements_after,
+            "files_before": files_before,
+            "files_after": files_after,
+            "status": "cleared"
+        }
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to clear PostgreSQL: {str(e)}")
+
+@app.delete("/admin/databases/clear")
+def clear_all_databases(db: Session = Depends(get_db)):
+    """Clear all data from both PostgreSQL and ChromaDB (admin only)"""
+    try:
+        # Get stats before clearing
+        measurements_before = db.query(ArgoMeasurement).count()
+        files_before = db.query(UploadedFile).count()
+        vector_stats_before = vector_store.get_collection_stats()
+        vector_measurements_before = vector_stats_before.get('total_measurements', 0)
+        
+        # Clear PostgreSQL
+        db.query(ArgoMeasurement).delete()
+        db.query(UploadedFile).delete()
+        db.commit()
+        
+        # Clear ChromaDB
+        vector_store.clear_all()
+        
+        # Force reinitialize vector store to ensure clean state
+        vector_store.reinitialize()
+        
+        # Get stats after clearing
+        measurements_after = db.query(ArgoMeasurement).count()
+        files_after = db.query(UploadedFile).count()
+        vector_stats_after = vector_store.get_collection_stats()
+        vector_measurements_after = vector_stats_after.get('total_measurements', 0)
+        
+        return {
+            "message": f"All databases cleared successfully. Removed {measurements_before} PostgreSQL measurements, {files_before} files, and {vector_measurements_before} ChromaDB measurements.",
+            "postgres": {
+                "measurements_before": measurements_before,
+                "measurements_after": measurements_after,
+                "files_before": files_before,
+                "files_after": files_after
+            },
+            "chromadb": {
+                "measurements_before": vector_measurements_before,
+                "measurements_after": vector_measurements_after
+            },
+            "status": "cleared"
+        }
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to clear databases: {str(e)}")
+
+@app.post("/admin/reinitialize")
+def reinitialize_connections():
+    """Reinitialize database connections and clear caches (admin only)"""
+    global vector_store
+    try:
+        # Reinitialize vector store to pick up any external database changes
+        vector_store.reinitialize()
+        
+        # Get fresh stats
+        vector_stats = vector_store.get_collection_stats()
+        
+        return {
+            "message": "Connections reinitialized successfully.",
+            "vector_store": vector_stats,
+            "status": "reinitialized"
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to reinitialize: {str(e)}")
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host=BACKEND_HOST, port=BACKEND_PORT)

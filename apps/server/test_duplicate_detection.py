@@ -6,7 +6,6 @@ This script tests the duplicate detection at both file and measurement levels.
 
 import os
 import sys
-import tempfile
 import hashlib
 from datetime import datetime
 from dotenv import load_dotenv
@@ -14,7 +13,7 @@ from dotenv import load_dotenv
 # Add the src directory to the path so we can import our modules
 sys.path.append(os.path.join(os.path.dirname(__file__), 'src'))
 
-from database import get_db, ArgoMeasurement, UploadedFile
+from database import ArgoMeasurement
 from vector_store import VectorStore
 
 load_dotenv()

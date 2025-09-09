@@ -1,4 +1,7 @@
+import React from 'react';
 import type { UploadResponse } from '../../types';
+import { DragDropUpload } from '../common/DragDropUpload';
+import { ErrorDisplay } from '../common/ErrorDisplay';
 
 interface FileUploadProps {
   onFileChange: (event: React.ChangeEvent<HTMLInputElement>) => void;
@@ -8,70 +11,146 @@ interface FileUploadProps {
 }
 
 export const FileUpload = ({ onFileChange, status, uploadDetails, isUploading }: FileUploadProps) => {
+  const handleFileSelect = (file: File) => {
+    const event = {
+      target: { files: [file] }
+    } as unknown as React.ChangeEvent<HTMLInputElement>;
+    onFileChange(event);
+  };
+
+  const isError = status && (
+    status.toLowerCase().includes('error') || 
+    status.toLowerCase().includes('failed') || 
+    status.toLowerCase().includes('invalid')
+  ) && !isUploading;
+
+  const isSuccess = status && (
+    status.toLowerCase().includes('success') || 
+    status.toLowerCase().includes('uploaded') || 
+    status.toLowerCase().includes('added') ||
+    status.toLowerCase().includes('completed')
+  ) && !isUploading;
+
+  const isDuplicate = status && (
+    status.toLowerCase().includes('duplicate') || 
+    status.toLowerCase().includes('already')
+  ) && !isUploading;
+
   return (
-    <div className="space-y-4">
-      <div className="text-center sm:text-left">
-        <h2 className="text-xl sm:text-2xl font-semibold text-gray-900 mb-2">
-          Upload ARGO NetCDF Files
-        </h2>
-        <p className="text-sm text-gray-600 mb-4">
-          Select NetCDF files containing ARGO ocean data for processing. Duplicate files and measurements will be automatically detected and skipped.
+    <div className="space-y-6">
+      <div className="text-center">
+        <p className="text-slate-600 text-lg leading-relaxed max-w-2xl mx-auto">
+          Upload ARGO NetCDF files for processing and analysis. Our system automatically validates data, 
+          detects duplicates, and makes your ocean measurements searchable.
         </p>
       </div>
       
-      <div className="relative">
-        <input
-          type="file"
-          accept=".nc,.netcdf"
-          onChange={onFileChange}
+      {!isUploading && !isSuccess && !isDuplicate && !isError && (
+        <DragDropUpload
+          onFileSelect={handleFileSelect}
           disabled={isUploading}
-          className={`block w-full text-sm text-gray-900 border border-gray-300 rounded-lg cursor-pointer bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-medium file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100 ${
-            isUploading ? 'opacity-50 cursor-not-allowed' : ''
-          }`}
-          aria-describedby="file-upload-help"
+          className="max-w-2xl mx-auto"
         />
-        <p className="mt-2 text-xs text-gray-500" id="file-upload-help">
-          Supported formats: .nc, .netcdf (Max file size: 50MB)
-        </p>
-      </div>
-      
-      {status && (
-        <div className={`p-3 rounded-lg text-sm font-medium ${
-          status.toLowerCase().includes('error') || status.toLowerCase().includes('failed')
-            ? 'bg-red-50 text-red-800 border border-red-200'
-            : status.toLowerCase().includes('success') || status.toLowerCase().includes('uploaded') || status.toLowerCase().includes('added')
-            ? 'bg-green-50 text-green-800 border border-green-200'
-            : status.toLowerCase().includes('duplicate') || status.toLowerCase().includes('already')
-            ? 'bg-yellow-50 text-yellow-800 border border-yellow-200'
-            : 'bg-blue-50 text-blue-800 border border-blue-200'
-        }`}>
-          {status}
+      )}
+
+      {isUploading && (
+        <div className="max-w-2xl mx-auto">
+          <div className="bg-white rounded-2xl border border-indigo-100 shadow-lg p-6">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-8 h-8 bg-indigo-500 rounded-xl flex items-center justify-center">
+                <svg className="w-4 h-4 text-white animate-spin" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+              </div>
+              <h3 className="font-bold text-lg text-slate-800">Processing Upload</h3>
+            </div>
+            <p className="text-slate-600">{status}</p>
+          </div>
         </div>
       )}
       
-      {uploadDetails && (
-        <div className="bg-gray-50 p-4 rounded-lg border border-gray-200">
-          <h3 className="text-sm font-medium text-gray-900 mb-2">Upload Details</h3>
-          <div className="space-y-1 text-xs text-gray-600">
-            {uploadDetails.measurements_count !== undefined && (
-              <div>New measurements added: <span className="font-medium text-green-600">{uploadDetails.measurements_count}</span></div>
-            )}
-            {uploadDetails.duplicate_measurements !== undefined && uploadDetails.duplicate_measurements > 0 && (
-              <div>Duplicate measurements skipped: <span className="font-medium text-yellow-600">{uploadDetails.duplicate_measurements}</span></div>
-            )}
-            {uploadDetails.total_in_file !== undefined && (
-              <div>Total measurements in file: <span className="font-medium">{uploadDetails.total_in_file}</span></div>
-            )}
-            {uploadDetails.vector_stats && (
-              <div>Vector store duplicates skipped: <span className="font-medium text-yellow-600">{uploadDetails.vector_stats.duplicates_skipped}</span></div>
-            )}
-            {uploadDetails.status && (
-              <div>Status: <span className={`font-medium ${
-                uploadDetails.status === 'completed' ? 'text-green-600' :
-                uploadDetails.status === 'duplicate_file' ? 'text-yellow-600' :
-                uploadDetails.status === 'all_duplicates' ? 'text-yellow-600' : 'text-blue-600'
-              }`}>{uploadDetails.status.replace('_', ' ')}</span></div>
-            )}
+      {isError && (
+        <div className="max-w-2xl mx-auto">
+          <ErrorDisplay error={status} />
+        </div>
+      )}
+      
+      {(isSuccess || isDuplicate) && (
+        <div className="max-w-2xl mx-auto">
+          <div className={`rounded-2xl border-2 p-6 ${
+            isSuccess 
+              ? 'bg-emerald-50 border-emerald-200' 
+              : 'bg-amber-50 border-amber-200'
+          }`}>
+            <div className="flex items-start gap-4">
+              <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${
+                isSuccess 
+                  ? 'bg-emerald-500 text-white' 
+                  : 'bg-amber-500 text-white'
+              }`}>
+                {isSuccess ? (
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                  </svg>
+                ) : (
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                )}
+              </div>
+              
+              <div className="flex-1">
+                <h3 className={`font-bold text-lg mb-2 ${
+                  isSuccess ? 'text-emerald-800' : 'text-amber-800'
+                }`}>
+                  {isSuccess ? 'Upload Successful!' : 'Duplicate Detected'}
+                </h3>
+                <p className={`text-sm mb-4 ${
+                  isSuccess ? 'text-emerald-700' : 'text-amber-700'
+                }`}>
+                  {status}
+                </p>
+                
+                {uploadDetails && (
+                  <div className="bg-white/60 rounded-xl p-4 space-y-2">
+                    <h4 className={`font-semibold ${
+                      isSuccess ? 'text-emerald-800' : 'text-amber-800'
+                    }`}>
+                      Processing Summary
+                    </h4>
+                    <div className={`grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm ${
+                      isSuccess ? 'text-emerald-700' : 'text-amber-700'
+                    }`}>
+                      {uploadDetails.measurements_count !== undefined && (
+                        <div className="flex justify-between">
+                          <span>New measurements:</span>
+                          <span className="font-semibold">{uploadDetails.measurements_count}</span>
+                        </div>
+                      )}
+                      {uploadDetails.duplicate_measurements !== undefined && uploadDetails.duplicate_measurements > 0 && (
+                        <div className="flex justify-between">
+                          <span>Duplicates skipped:</span>
+                          <span className="font-semibold">{uploadDetails.duplicate_measurements}</span>
+                        </div>
+                      )}
+                      {uploadDetails.total_in_file !== undefined && (
+                        <div className="flex justify-between">
+                          <span>Total in file:</span>
+                          <span className="font-semibold">{uploadDetails.total_in_file}</span>
+                        </div>
+                      )}
+                      {uploadDetails.vector_stats && (
+                        <div className="flex justify-between">
+                          <span>Vector duplicates:</span>
+                          <span className="font-semibold">{uploadDetails.vector_stats.duplicates_skipped}</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
         </div>
       )}

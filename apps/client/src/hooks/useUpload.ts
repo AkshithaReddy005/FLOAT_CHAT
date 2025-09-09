@@ -26,12 +26,13 @@ export const useUpload = () => {
       } else {
         setStatus(`Upload successful! Added ${response.measurements_count} new measurements. Data is available to researchers.`);
       }
+      
+      setIsUploading(false);
     } catch (error) {
       console.error('Upload error:', error);
       setStatus('Upload failed. Please try again.');
       setUploadDetails(null);
-    } finally {
-      setIsUploading(false);
+      setIsUploading(false); // Immediately stop on error
     }
   };
 
