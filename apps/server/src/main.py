@@ -476,7 +476,47 @@ async def query_data(request: QueryRequest, db: Session = Depends(get_db)):
         )
         
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Query failed: {str(e)}")
+        print(f"Query processing error: {e}")
+        # Try to provide some recent data as fallback
+        try:
+            recent_data = db.query(ArgoMeasurement).order_by(ArgoMeasurement.date.desc()).limit(50).all()
+            results = []
+            for r in recent_data:
+                try:
+                    results.append(ArgoMeasurementDict(
+                        float_id=str(r.float_id),
+                        latitude=float(r.latitude) if r.latitude is not None else 0.0,
+                        longitude=float(r.longitude) if r.longitude is not None else 0.0,
+                        date=str(r.date) if r.date else "",
+                        depth=float(r.depth) if r.depth is not None else 0.0,
+                        temperature=float(r.temperature) if r.temperature is not None else 0.0,
+                        salinity=float(r.salinity) if r.salinity is not None else 0.0,
+                        pressure=float(r.pressure) if r.pressure is not None else 0.0
+                    ))
+                except (ValueError, TypeError):
+                    continue
+            
+            fallback_message = (
+                f"I encountered a technical issue while processing your specific query, but I can show you "
+                f"some recent ARGO data from our system. Found {len(results)} recent measurements. "
+                f"Please try rephrasing your question or asking about specific ocean regions or parameters."
+            )
+            
+            return QueryResponse(
+                results=results,
+                message=fallback_message
+            )
+        except Exception as fallback_error:
+            print(f"Fallback also failed: {fallback_error}")
+            # Final fallback
+            return QueryResponse(
+                results=[],
+                message=(
+                    "I'm experiencing technical difficulties. Our system contains ARGO oceanographic "
+                    "measurements including temperature, salinity, depth, and pressure data. "
+                    "Please try asking about recent data, specific ocean regions, or what data is available."
+                )
+            )
 
 @app.post("/chat", response_model=ChatResponse)
 async def chat_with_data(request: ChatRequest, db: Session = Depends(get_db)):
@@ -489,16 +529,21 @@ async def chat_with_data(request: ChatRequest, db: Session = Depends(get_db)):
         # Convert data to ArgoMeasurementDict format for consistency
         data_dicts = []
         for item in result["data"]:
-            data_dicts.append(ArgoMeasurementDict(
-                float_id=str(item["float_id"]),
-                latitude=float(item["latitude"]),
-                longitude=float(item["longitude"]),
-                date=str(item["date"]) if item["date"] else "",
-                depth=float(item["depth"]),
-                temperature=float(item["temperature"]) if item["temperature"] else 0.0,
-                salinity=float(item["salinity"]) if item["salinity"] else 0.0,
-                pressure=float(item["pressure"]) if item["pressure"] else 0.0
-            ))
+            try:
+                data_dicts.append(ArgoMeasurementDict(
+                    float_id=str(item["float_id"]),
+                    latitude=float(item["latitude"]) if item["latitude"] is not None else 0.0,
+                    longitude=float(item["longitude"]) if item["longitude"] is not None else 0.0,
+                    date=str(item["date"]) if item["date"] else "",
+                    depth=float(item["depth"]) if item["depth"] is not None else 0.0,
+                    temperature=float(item["temperature"]) if item["temperature"] is not None else 0.0,
+                    salinity=float(item["salinity"]) if item["salinity"] is not None else 0.0,
+                    pressure=float(item["pressure"]) if item["pressure"] is not None else 0.0
+                ))
+            except (ValueError, TypeError) as e:
+                # Skip invalid data points but continue processing
+                print(f"Skipping invalid data point: {e}")
+                continue
         
         return ChatResponse(
             response=result["response"],
@@ -509,7 +554,32 @@ async def chat_with_data(request: ChatRequest, db: Session = Depends(get_db)):
         )
         
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Chat query failed: {str(e)}")
+        print(f"Error in chat endpoint: {e}")
+        # Instead of raising an exception, provide a fallback response
+        try:
+            # Try to get some basic data as fallback
+            fallback_result = await chatbot_service.create_fallback_response(request.message, db)
+            return ChatResponse(
+                response=fallback_result["response"],
+                data=fallback_result["data"],
+                visualization=fallback_result["visualization"],
+                query_params=fallback_result["query_params"],
+                context_count=fallback_result["context_count"]
+            )
+        except Exception as fallback_error:
+            print(f"Fallback also failed: {fallback_error}")
+            # Final safety net - always return something useful
+            return ChatResponse(
+                response=("I'm having some technical difficulties, but I can still help you explore ARGO data! "
+                         "The system contains oceanographic measurements including temperature, salinity, and depth data "
+                         "from ARGO floats across various ocean regions. You can try asking about specific locations, "
+                         "recent measurements, or data comparisons. I'm working to resolve the technical issue."),
+                data=[],
+                visualization={"map": {"points": []}, "depth_profile": {"data": []}},
+                query_params={"classification": {"needs_data": False}, "sql_used": None, 
+                            "context_retrieved": 0, "data_points": 0},
+                context_count=0
+            )
 
 @app.get("/examples")
 def get_example_queries(db: Session = Depends(get_db)):

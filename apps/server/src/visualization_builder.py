@@ -15,39 +15,78 @@ class VisualizationBuilder:
     def build_visualization(self, db_results: List[Dict], query_classification: Dict) -> Dict:
         """Build comprehensive visualization data based on results and query type"""
         
-        if not db_results:
-            return {"type": "empty", "message": "No data available for visualization", "available_visualizations": []}
-        
-        # Determine visualization types based on query classification
-        viz_data = {
-            "summary": self._build_summary(db_results),
-            "available_visualizations": []
-        }
-        
-        # Only include map if we have sufficient valid location data
-        if self._has_valid_location_data(db_results):
-            map_data = self._build_map_data(db_results)
-            if map_data.get("total_points", 0) > 0:
-                viz_data["map"] = map_data
-                viz_data["available_visualizations"].append("map")
-        
-        # Only add depth profile if we have sufficient depth and measurement data
-        if self._has_sufficient_depth_data(db_results):
-            depth_data = self._build_depth_profile(db_results)
-            if depth_data.get("data") and len(depth_data["data"]) > 0:
-                viz_data["depth_profile"] = depth_data
-                viz_data["available_visualizations"].append("depth_profile")
-        
-        # Only add time series if we have meaningful temporal data
-        if self._has_meaningful_time_data(db_results):
-            time_data = self._build_time_series(db_results)
-            if time_data.get("data") and len(time_data["data"]) > 1:  # Need at least 2 time points
-                viz_data["time_series"] = time_data
-                viz_data["available_visualizations"].append("time_series")
-        
-        # Only add statistical charts for analytical queries with sufficient data
-        if query_classification.get("is_analytical", False) and len(db_results) >= 10:
-            stats_data = self._build_statistics(db_results)
+        try:
+            if not db_results:
+                return {
+                    "type": "empty", 
+                    "message": "No data available for visualization", 
+                    "available_visualizations": [],
+                    "map": {"type": "scatter", "points": []},
+                    "depth_profile": {"type": "line", "data": []}
+                }
+            
+            # Determine visualization types based on query classification
+            viz_data = {
+                "summary": self._build_summary(db_results),
+                "available_visualizations": []
+            }
+            
+            # Always try to provide basic map and depth profile structures
+            viz_data["map"] = {"type": "scatter", "points": []}
+            viz_data["depth_profile"] = {"type": "line", "data": []}
+            
+            try:
+                # Only include map if we have sufficient valid location data
+                if self._has_valid_location_data(db_results):
+                    map_data = self._build_map_data(db_results)
+                    if map_data.get("total_points", 0) > 0:
+                        viz_data["map"] = map_data
+                        viz_data["available_visualizations"].append("map")
+            except Exception as e:
+                print(f"Map data building failed: {e}")
+            
+            try:
+                # Only add depth profile if we have sufficient depth and measurement data
+                if self._has_sufficient_depth_data(db_results):
+                    depth_data = self._build_depth_profile(db_results)
+                    if depth_data.get("data") and len(depth_data["data"]) > 0:
+                        viz_data["depth_profile"] = depth_data
+                        viz_data["available_visualizations"].append("depth_profile")
+            except Exception as e:
+                print(f"Depth profile building failed: {e}")
+            
+            try:
+                # Only add time series if we have meaningful temporal data
+                if self._has_meaningful_time_data(db_results):
+                    time_data = self._build_time_series(db_results)
+                    if time_data.get("data") and len(time_data["data"]) > 1:  # Need at least 2 time points
+                        viz_data["time_series"] = time_data
+                        viz_data["available_visualizations"].append("time_series")
+            except Exception as e:
+                print(f"Time series building failed: {e}")
+            
+            try:
+                # Only add statistical charts for analytical queries with sufficient data
+                if query_classification.get("is_analytical", False) and len(db_results) >= 10:
+                    stats_data = self._build_statistics(db_results)
+                    if stats_data:
+                        viz_data["statistics"] = stats_data
+                        viz_data["available_visualizations"].append("statistics")
+            except Exception as e:
+                print(f"Statistics building failed: {e}")
+            
+            return viz_data
+            
+        except Exception as e:
+            print(f"Visualization building completely failed: {e}")
+            # Return minimal safe structure
+            return {
+                "type": "error",
+                "message": "Visualization data could not be generated",
+                "available_visualizations": [],
+                "map": {"type": "scatter", "points": []},
+                "depth_profile": {"type": "line", "data": []}
+            }
             if self._has_valid_statistics(stats_data):
                 viz_data["statistics"] = stats_data
                 viz_data["available_visualizations"].append("statistics")

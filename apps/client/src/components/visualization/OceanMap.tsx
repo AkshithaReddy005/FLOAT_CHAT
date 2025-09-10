@@ -4,7 +4,7 @@ import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
 
 // Fix for default markers
-delete (L.Icon.Default.prototype as any)._getIconUrl;
+delete ((L.Icon.Default as unknown) as { _getIconUrl?: unknown })._getIconUrl;
 L.Icon.Default.mergeOptions({
   iconRetinaUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon-2x.png',
   iconUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon.png',
@@ -27,16 +27,11 @@ interface OceanMapProps {
 }
 
 const OceanMap: React.FC<OceanMapProps> = ({ points, className = '' }) => {
-  if (!points || points.length === 0) {
-    return (
-      <div className="flex items-center justify-center h-96 bg-gray-50 rounded-lg border-2 border-dashed border-gray-300">
-        <p className="text-gray-500 text-lg">No location data available for visualization</p>
-      </div>
-    );
-  }
-
   // Calculate bounds for auto-fit (memoized to prevent re-fitting on popup open)
   const bounds: [[number, number], [number, number]] = useMemo(() => {
+    if (!points || points.length === 0) {
+      return [[0, 0], [0, 0]];
+    }
     const lats = points.map(d => d.lat);
     const lons = points.map(d => d.lon);
     return [
@@ -44,6 +39,14 @@ const OceanMap: React.FC<OceanMapProps> = ({ points, className = '' }) => {
       [Math.max(...lats) + 1, Math.max(...lons) + 1]
     ];
   }, [points]);
+
+  if (!points || points.length === 0) {
+    return (
+      <div className="flex items-center justify-center h-96 bg-gray-50 rounded-lg border-2 border-dashed border-gray-300">
+        <p className="text-gray-500 text-lg">No location data available for visualization</p>
+      </div>
+    );
+  }
 
   // Enhanced temperature color mapping
   const getTemperatureColor = (temp?: number): string => {
@@ -77,7 +80,11 @@ const OceanMap: React.FC<OceanMapProps> = ({ points, className = '' }) => {
       // Find the surface measurement (smallest depth) for this location
       const surfacePoint = points
         .filter(p => p.lat === point.lat && p.lon === point.lon && p.float_id === point.float_id)
-        .reduce((min, curr) => curr.depth < min.depth ? curr : min, point);
+        .reduce((min, curr) => {
+          const minDepth = (min.depth ?? Number.POSITIVE_INFINITY);
+          const currDepth = (curr.depth ?? Number.POSITIVE_INFINITY);
+          return currDepth < minDepth ? curr : min;
+        }, point);
       acc[key] = surfacePoint;
     }
     return acc;

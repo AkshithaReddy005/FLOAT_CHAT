@@ -5,6 +5,7 @@ import { ResultsGrid } from './ResultsGrid';
 import OceanMap from '../visualization/OceanMap';
 import DepthProfile from '../visualization/DepthProfile';
 import { useQuery } from '../../hooks/useQuery';
+import { formatChatMessage } from '../../utils/formatChatMessage';
 
 export const ResearcherDashboard = () => {
   const [query, setQuery] = useState('');
@@ -35,7 +36,7 @@ export const ResearcherDashboard = () => {
         {message && (
           <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
             <h3 className="font-semibold text-blue-900 mb-2">Analysis Results</h3>
-            <p className="text-blue-800">{message}</p>
+            <p className="text-blue-800" dangerouslySetInnerHTML={{ __html: formatChatMessage(message) }} />
           </div>
         )}
 

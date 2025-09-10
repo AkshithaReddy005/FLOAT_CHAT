@@ -1,5 +1,4 @@
 import { useState, useRef, useCallback } from 'react';
-import { Button } from './Button';
 
 interface DragDropUploadProps {
   onFileSelect: (file: File) => void;

@@ -86,12 +86,22 @@ class VectorStore:
         return hashlib.sha256(key_string.encode()).hexdigest()[:32]
     
     def search(self, query: str, n_results: int = 10):
-        """Search for relevant measurements"""
-        results = self.collection.query(
-            query_texts=[query],
-            n_results=n_results
-        )
-        return results
+        """Search for relevant measurements with error handling"""
+        try:
+            results = self.collection.query(
+                query_texts=[query],
+                n_results=n_results
+            )
+            return results
+        except Exception as e:
+            print(f"Vector store search failed: {e}")
+            # Return empty results structure
+            return {
+                'documents': [[]],
+                'distances': [[]],
+                'metadatas': [[]],
+                'ids': [[]]
+            }
     
     def get_collection_stats(self) -> Dict:
         """Get statistics about the vector store collection"""

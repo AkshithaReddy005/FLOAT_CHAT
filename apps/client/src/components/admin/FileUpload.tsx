@@ -45,7 +45,7 @@ export const FileUpload = ({ onFileChange, status, uploadDetails, isUploading }:
         </p>
       </div>
       
-      {!isUploading && !isSuccess && !isDuplicate && !isError && (
+      {!isUploading && (
         <DragDropUpload
           onFileSelect={handleFileSelect}
           disabled={isUploading}
