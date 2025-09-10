@@ -1,4 +1,4 @@
-import type { QueryResponse, UploadResponse } from '../types';
+import type { QueryResponse, UploadResponse, ChatRequest, ChatResponse } from '../types';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
 
@@ -42,6 +42,16 @@ class ApiService {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({ query }),
+    });
+  }
+
+  async chatWithData(message: string): Promise<ChatResponse> {
+    return this.makeRequest<ChatResponse>('/chat', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ message }),
     });
   }
 

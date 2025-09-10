@@ -29,4 +29,66 @@ export interface UploadResponse {
   status: string;
 }
 
+export interface ChatRequest {
+  message: string;
+}
+
+export interface ChatResponse {
+  response: string;
+  data: ArgoMeasurement[];
+  visualization: {
+    map?: {
+      type: string;
+      points: Array<{
+        lat: number;
+        lon: number;
+        float_id: string;
+        temperature: number;
+        salinity: number;
+        depth: number;
+        date: string;
+      }>;
+    };
+    depth_profile?: {
+      type: string;
+      data: Array<{
+        depth: number;
+        temperature: number;
+        salinity: number;
+        float_id: string;
+      }>;
+    };
+    time_series?: {
+      type: string;
+      data: Array<{
+        date: string;
+        temperature: number;
+        salinity: number;
+        float_id: string;
+      }>;
+    };
+    summary?: {
+      total_measurements: number;
+      unique_floats: number;
+      date_range?: {
+        start: string;
+        end: string;
+      };
+    };
+    type?: string;
+  };
+  query_params: {
+    location?: {
+      lat_range: [number, number];
+      lon_range: [number, number];
+    };
+    date_range?: [string, string] | null;
+    depth_range?: [number, number] | null;
+    parameter?: string | null;
+    float_id?: string | null;
+    limit: number;
+  };
+  context_count: number;
+}
+
 export type UserType = 'admin' | 'researcher' | null;

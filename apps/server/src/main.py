@@ -13,6 +13,7 @@ from dotenv import load_dotenv
 from database import get_db, create_tables, ArgoMeasurement, UploadedFile
 from vector_store import VectorStore
 from netcdf_processor import NetCDFProcessor
+from chatbot_service import ChatbotService
 
 # Load environment variables
 load_dotenv()
@@ -50,6 +51,7 @@ app.add_middleware(
 
 # Initialize components
 vector_store = VectorStore()
+chatbot_service = ChatbotService(vector_store)
 
 class QueryRequest(BaseModel):
     query: str
@@ -67,6 +69,16 @@ class ArgoMeasurementDict(BaseModel):
 class QueryResponse(BaseModel):
     results: List[ArgoMeasurementDict]
     message: str
+
+class ChatRequest(BaseModel):
+    message: str
+
+class ChatResponse(BaseModel):
+    response: str
+    data: List[ArgoMeasurementDict]
+    visualization: dict
+    query_params: dict
+    context_count: int
 
 @app.on_event("startup")
 def startup_event():
@@ -276,6 +288,39 @@ async def query_data(request: QueryRequest, db: Session = Depends(get_db)):
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Query failed: {str(e)}")
+
+@app.post("/chat", response_model=ChatResponse)
+async def chat_with_data(request: ChatRequest, db: Session = Depends(get_db)):
+    """Chat endpoint for natural language queries about ARGO data"""
+    
+    try:
+        # Process the chat query using the chatbot service
+        result = await chatbot_service.process_chat_query(request.message, db)
+        
+        # Convert data to ArgoMeasurementDict format for consistency
+        data_dicts = []
+        for item in result["data"]:
+            data_dicts.append(ArgoMeasurementDict(
+                float_id=str(item["float_id"]),
+                latitude=float(item["latitude"]),
+                longitude=float(item["longitude"]),
+                date=str(item["date"]) if item["date"] else "",
+                depth=float(item["depth"]),
+                temperature=float(item["temperature"]) if item["temperature"] else 0.0,
+                salinity=float(item["salinity"]) if item["salinity"] else 0.0,
+                pressure=float(item["pressure"]) if item["pressure"] else 0.0
+            ))
+        
+        return ChatResponse(
+            response=result["response"],
+            data=data_dicts,
+            visualization=result["visualization"],
+            query_params=result["query_params"],
+            context_count=result["context_count"]
+        )
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Chat query failed: {str(e)}")
 
 @app.get("/admin/stats")
 def get_stats(db: Session = Depends(get_db)):
