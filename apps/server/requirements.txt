@@ -10,5 +10,5 @@ numpy
 pandas
 python-dotenv
 pydantic
-openai>=1.2.4
+google-generativeai
 requests

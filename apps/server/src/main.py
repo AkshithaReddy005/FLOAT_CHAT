@@ -13,7 +13,8 @@ from dotenv import load_dotenv
 from database import get_db, create_tables, ArgoMeasurement, UploadedFile
 from vector_store import VectorStore
 from netcdf_processor import NetCDFProcessor
-from chatbot_service import ChatbotService
+from chatbot_service_new import ChatbotService
+from example_query_generator import ExampleQueryGenerator
 
 # Load environment variables
 load_dotenv()
@@ -52,6 +53,7 @@ app.add_middleware(
 # Initialize components
 vector_store = VectorStore()
 chatbot_service = ChatbotService(vector_store)
+example_generator = ExampleQueryGenerator(vector_store)
 
 class QueryRequest(BaseModel):
     query: str
@@ -321,6 +323,87 @@ async def chat_with_data(request: ChatRequest, db: Session = Depends(get_db)):
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Chat query failed: {str(e)}")
+
+@app.get("/examples")
+def get_example_queries(db: Session = Depends(get_db)):
+    """Get dynamic example queries based on available data"""
+    try:
+        examples = example_generator.generate_dynamic_examples(db, max_examples=6)
+        return {
+            "examples": examples,
+            "generated_at": time.time(),
+            "status": "success"
+        }
+    except Exception as e:
+        # Return fallback examples on error
+        fallback_examples = example_generator._get_fallback_examples()
+        return {
+            "examples": fallback_examples,
+            "generated_at": time.time(),
+            "status": "fallback",
+            "error": str(e)
+        }
+
+@app.get("/health")
+def health_check(db: Session = Depends(get_db)):
+    """Comprehensive health check for all system components"""
+    
+    health_status = {
+        "timestamp": time.time(),
+        "overall_status": "healthy",
+        "components": {}
+    }
+    
+    try:
+        # Check database connection
+        db_count = db.query(ArgoMeasurement).count()
+        health_status["components"]["database"] = {
+            "status": "healthy",
+            "measurements_count": db_count,
+            "message": f"Database accessible with {db_count} measurements"
+        }
+    except Exception as e:
+        health_status["components"]["database"] = {
+            "status": "unhealthy", 
+            "error": str(e),
+            "message": "Database connection failed"
+        }
+        health_status["overall_status"] = "degraded"
+    
+    try:
+        # Check vector store
+        vector_stats = vector_store.get_collection_stats()
+        health_status["components"]["vector_store"] = {
+            "status": "healthy",
+            "stats": vector_stats,
+            "message": "Vector store accessible"
+        }
+    except Exception as e:
+        health_status["components"]["vector_store"] = {
+            "status": "unhealthy",
+            "error": str(e), 
+            "message": "Vector store connection failed"
+        }
+        health_status["overall_status"] = "degraded"
+    
+    try:
+        # Check RAG components
+        from rag_engine import RAGEngine
+        rag_test = RAGEngine()
+        health_status["components"]["rag_engine"] = {
+            "status": "healthy",
+            "gemini_available": rag_test.use_gemini,
+            "message": f"RAG engine initialized ({'with Gemini' if rag_test.use_gemini else 'rule-based only'})"
+        }
+    except Exception as e:
+        health_status["components"]["rag_engine"] = {
+            "status": "unhealthy",
+            "error": str(e),
+            "message": "RAG engine initialization failed" 
+        }
+        health_status["overall_status"] = "degraded"
+    
+    return health_status
 
 @app.get("/admin/stats")
 def get_stats(db: Session = Depends(get_db)):
