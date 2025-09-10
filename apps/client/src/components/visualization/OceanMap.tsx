@@ -1,5 +1,5 @@
-import React from 'react';
-import { MapContainer, TileLayer, CircleMarker } from 'react-leaflet';
+import React, { useMemo } from 'react';
+import { MapContainer, TileLayer, CircleMarker, Popup } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
 
@@ -35,13 +35,15 @@ const OceanMap: React.FC<OceanMapProps> = ({ points, className = '' }) => {
     );
   }
 
-  // Calculate bounds for auto-fit
-  const lats = points.map(d => d.lat);
-  const lons = points.map(d => d.lon);
-  const bounds: [[number, number], [number, number]] = [
-    [Math.min(...lats) - 1, Math.min(...lons) - 1],
-    [Math.max(...lats) + 1, Math.max(...lons) + 1]
-  ];
+  // Calculate bounds for auto-fit (memoized to prevent re-fitting on popup open)
+  const bounds: [[number, number], [number, number]] = useMemo(() => {
+    const lats = points.map(d => d.lat);
+    const lons = points.map(d => d.lon);
+    return [
+      [Math.min(...lats) - 1, Math.min(...lons) - 1],
+      [Math.max(...lats) + 1, Math.max(...lons) + 1]
+    ];
+  }, [points]);
 
   // Enhanced temperature color mapping
   const getTemperatureColor = (temp?: number): string => {
@@ -84,7 +86,7 @@ const OceanMap: React.FC<OceanMapProps> = ({ points, className = '' }) => {
   const uniquePoints = Object.values(uniqueLocations);
 
   return (
-    <div className={`h-96 w-full rounded-lg overflow-hidden shadow-lg ${className}`}>
+    <div className={`relative h-96 w-full rounded-lg shadow-lg ${className}`}>
       <MapContainer
         bounds={bounds}
         className="w-full h-full"
@@ -115,7 +117,7 @@ const OceanMap: React.FC<OceanMapProps> = ({ points, className = '' }) => {
             weight={2}
             opacity={0.9}
             fillOpacity={0.8}
-            className="hover:scale-110 transition-transform duration-200"
+            className=""
           >
             <Popup className="custom-popup">
               <div className="p-3 min-w-48">
@@ -174,7 +176,7 @@ const OceanMap: React.FC<OceanMapProps> = ({ points, className = '' }) => {
       </MapContainer>
 
       {/* Enhanced Temperature Legend */}
-      <div className="absolute bottom-4 right-4 bg-white/95 backdrop-blur-sm p-4 rounded-lg shadow-lg border border-gray-200">
+      <div className="absolute bottom-4 right-4 bg-white/95 backdrop-blur-sm p-4 rounded-lg shadow-lg border border-gray-200 pointer-events-none">
         <h4 className="font-bold text-sm text-gray-800 mb-3">Temperature Scale</h4>
         <div className="space-y-1">
           {[

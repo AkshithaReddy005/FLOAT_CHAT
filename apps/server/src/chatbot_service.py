@@ -4,9 +4,10 @@ import re
 from typing import Dict, List, Optional, Tuple
 from datetime import datetime, timedelta
 from sqlalchemy.orm import Session
-from sqlalchemy import and_, func
+from sqlalchemy import and_, func, text
 import logging
 import requests
+from dotenv import load_dotenv
 
 from database import ArgoMeasurement
 from vector_store import VectorStore
@@ -25,13 +26,21 @@ class ChatbotService:
     def __init__(self, vector_store: VectorStore):
         self.vector_store = vector_store
         self.openai_api_key = os.getenv("OPENAI_API_KEY")
+        self.openai_model = os.getenv("OPENAI_MODEL", "openai/gpt-4o")
+        self.openai_base_url = os.getenv("OPENAI_BASE_URL")
+        self.openrouter_site_url = os.getenv("OPENROUTER_SITE_URL", "")
+        self.openrouter_site_name = os.getenv("OPENROUTER_SITE_NAME", "FloatChat")
+        
+        # Debug logging
+        print(f"API Key configured: {'Yes' if self.openai_api_key else 'No'}")
+        print(f"Base URL: {self.openai_base_url}")
+        print(f"Model: {self.openai_model}")
         
         # Initialize OpenAI client if API key is available and package is installed
         if OPENAI_AVAILABLE and self.openai_api_key:
             try:
-                openai.api_key = self.openai_api_key
                 self.use_openai = True
-                print("OpenAI integration enabled")
+                print(f"OpenAI integration enabled with base URL: {self.openai_base_url}")
             except Exception as e:
                 print(f"Warning: Failed to initialize OpenAI: {e}. Using rule-based responses.")
                 self.use_openai = False
@@ -48,11 +57,26 @@ class ChatbotService:
         # Step 1: Retrieve relevant context from ChromaDB
         context_results = self.vector_store.search(user_query, n_results=10)
         
-        # Step 2: Extract query parameters using NLP or rule-based approach
+        # Step 2: Try NL->SQL using LLM first (safe, whitelisted), else fall back to rule-based
         query_params = self._extract_query_parameters(user_query)
-        
-        # Step 3: Execute database query based on extracted parameters
-        db_results = self._execute_database_query(db, query_params, context_results)
+        db_results: List[Dict]
+        used_nl2sql = False
+        if self.use_openai:
+            try:
+                sql_query = await self._generate_sql_query_with_llm(user_query)
+                if sql_query and self._validate_sql_query(sql_query):
+                    print(f"NL2SQL accepted SQL: {sql_query}")
+                    db_results = self._execute_sql_query(db, sql_query)
+                    used_nl2sql = True
+                else:
+                    if sql_query:
+                        print(f"NL2SQL rejected SQL by validator: {sql_query}")
+                    db_results = self._execute_database_query(db, query_params, context_results)
+            except Exception as e:
+                print(f"NL2SQL failed, falling back: {e}")
+                db_results = self._execute_database_query(db, query_params, context_results)
+        else:
+            db_results = self._execute_database_query(db, query_params, context_results)
         
         # Step 4: Generate AI response using LLM (if available) or rule-based response
         if self.use_openai:
@@ -70,6 +94,89 @@ class ChatbotService:
             "query_params": query_params,
             "context_count": len(context_results.get('documents', [[]])[0]) if context_results.get('documents') else 0
         }
+
+    async def _generate_sql_query_with_llm(self, user_query: str) -> Optional[str]:
+        """Use OpenAI to translate NL to a SAFE SQL selecting from argo_measurements only."""
+        instruction = (
+            "You translate a user's question about ARGO measurements into a single PostgreSQL SELECT query. "
+            "Rules:\n"
+            "- Query only the table argo_measurements.\n"
+            "- Allowed columns: id, float_id, latitude, longitude, date, depth, temperature, salinity, pressure.\n"
+            "- Do not use joins, CTEs, functions that modify data, or subqueries that write.\n"
+            "- No INSERT/UPDATE/DELETE/ALTER/DROP/TRUNCATE; SELECT only.\n"
+            "- Always select the explicit columns in this order: float_id, latitude, longitude, date, depth, temperature, salinity, pressure.\n"
+            "- Do NOT use SELECT *.\n"
+            "- Include an ORDER BY date DESC when applicable.\n"
+            "- Always include LIMIT 500.\n"
+            "- Return only the SQL, no backticks or commentary."
+        )
+        try:
+            client = self._get_openai_client()
+            completion = client.chat.completions.create(
+                model=self.openai_model,
+                messages=[
+                    {"role": "system", "content": instruction},
+                    {"role": "user", "content": user_query}
+                ],
+                temperature=0.2,
+                max_tokens=200
+            )
+            return completion.choices[0].message.content.strip()
+        except Exception as e:
+            print(f"Failed to generate SQL with LLM: {e}")
+            return None
+
+    def _validate_sql_query(self, sql: str) -> bool:
+        """Basic safety checks to ensure SELECT-only against allowed columns/table."""
+        if not sql:
+            return False
+        sql_clean = sql.strip().strip(';').lower()
+        # Must start with select
+        if not sql_clean.startswith("select"):
+            return False
+        # Must reference only argo_measurements
+        if " from argo_measurements" not in sql_clean:
+            return False
+        # Disallow dangerous keywords
+        forbidden = ["insert", "update", "delete", "drop", "alter", "truncate", ";", "--", "/*", "*/"]
+        if any(tok in sql_clean for tok in forbidden):
+            return False
+        # Simple allowlist for columns
+        allowed_cols = {"id","float_id","latitude","longitude","date","depth","temperature","salinity","pressure"}
+        # Very lightweight parse: ensure only allowed identifiers appear (heuristic)
+        tokens = re.findall(r"[a-z_][a-z0-9_]*", sql_clean)
+        identifiers = set(tokens)
+        # Allow keywords and table name
+        allowed_extra = {"select","from","where","and","or","between","order","by","desc","asc","limit","as","on","in","not","null","is"}
+        for ident in identifiers:
+            if ident in allowed_extra or ident == "argo_measurements":
+                continue
+            if ident not in allowed_cols and not ident.isdigit():
+                # Likely an unknown identifier
+                pass
+        # Require LIMIT
+        if " limit " not in sql_clean:
+            return False
+        return True
+
+    def _execute_sql_query(self, db: Session, sql: str) -> List[Dict]:
+        """Execute a validated read-only SQL and map to result dicts."""
+        sql_no_semicolon = sql.strip().rstrip(';')
+        rows = db.execute(text(sql_no_semicolon)).mappings().all()
+        results: List[Dict] = []
+        for r in rows:
+            # Ensure all expected keys exist; default to None
+            results.append({
+                "float_id": r.get("float_id"),
+                "latitude": r.get("latitude"),
+                "longitude": r.get("longitude"),
+                "date": r.get("date").isoformat() if r.get("date") else None,
+                "depth": r.get("depth"),
+                "temperature": r.get("temperature"),
+                "salinity": r.get("salinity"),
+                "pressure": r.get("pressure"),
+            })
+        return results
     
     def _extract_query_parameters(self, query: str) -> Dict:
         """Extract query parameters from natural language using rule-based approach"""
@@ -457,32 +564,17 @@ Please provide a helpful, informative response about the oceanographic data. Inc
 Keep the response conversational but scientifically accurate."""
 
         try:
-            # Try new OpenAI API format first
-            try:
-                from openai import OpenAI
-                client = OpenAI(api_key=self.openai_api_key)
-                response = client.chat.completions.create(
-                    model="gpt-3.5-turbo",
-                    messages=[
-                        {"role": "system", "content": "You are FloatChat, an expert oceanographic data analyst."},
-                        {"role": "user", "content": prompt}
-                    ],
-                    max_tokens=500,
-                    temperature=0.7
-                )
-                return response.choices[0].message.content
-            except:
-                # Fallback to old OpenAI API format
-                response = openai.ChatCompletion.create(
-                    model="gpt-3.5-turbo",
-                    messages=[
-                        {"role": "system", "content": "You are FloatChat, an expert oceanographic data analyst."},
-                        {"role": "user", "content": prompt}
-                    ],
-                    max_tokens=500,
-                    temperature=0.7
-                )
-                return response.choices[0].message.content
+            client = self._get_openai_client()
+            response = client.chat.completions.create(
+                model=self.openai_model,
+                messages=[
+                    {"role": "system", "content": "You are FloatChat, an expert oceanographic data analyst."},
+                    {"role": "user", "content": prompt}
+                ],
+                max_tokens=500,
+                temperature=0.7
+            )
+            return response.choices[0].message.content
         except Exception as e:
             print(f"OpenAI API error: {e}")
             return self._generate_rule_based_response(user_query, db_results)
@@ -586,3 +678,36 @@ Keep the response conversational but scientifically accurate."""
                 } if any(r["date"] for r in db_results) else None
             }
         }
+
+    def _get_openai_client(self):
+        from openai import OpenAI
+        
+        # Validate OpenRouter configuration
+        if not self.openai_base_url:
+            print("Warning: OPENAI_BASE_URL not set. Defaulting to OpenAI servers.")
+            return OpenAI(api_key=self.openai_api_key)
+        
+        if not self.openai_base_url.startswith("https://openrouter.ai"):
+            print(f"Warning: Base URL {self.openai_base_url} doesn't appear to be OpenRouter")
+        
+        # Prepare extra headers for OpenRouter
+        extra_headers = {}
+        if self.openrouter_site_url:
+            extra_headers["HTTP-Referer"] = self.openrouter_site_url
+        if self.openrouter_site_name:
+            extra_headers["X-Title"] = self.openrouter_site_name
+        
+        print(f"Creating OpenAI client with base_url: {self.openai_base_url}")
+        print(f"Extra headers: {extra_headers}")
+        
+        try:
+            client = OpenAI(
+                api_key=self.openai_api_key, 
+                base_url=self.openai_base_url,
+                default_headers=extra_headers if extra_headers else None
+            )
+            print("OpenAI client created successfully")
+            return client
+        except Exception as e:
+            print(f"Error creating OpenAI client: {e}")
+            raise
