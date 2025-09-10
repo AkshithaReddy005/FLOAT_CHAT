@@ -51,25 +51,39 @@ class QueryClassifier:
         analytical_score = sum(1 for keyword in self.analytical_keywords if keyword in query_lower)
         viz_score = sum(1 for keyword in self.visualization_keywords if keyword in query_lower)
         
-        # Determine query type with more refined logic
-        needs_data = (argo_score > 0 or temporal_score > 0 or spatial_score > 0 or 
-                     any(word in query_lower for word in ["find", "show", "get", "search", "data"]))
+        # More permissive data detection - err on the side of being helpful
+        needs_data = (
+            argo_score > 0 or 
+            temporal_score > 0 or 
+            spatial_score > 0 or 
+            any(word in query_lower for word in ["find", "show", "get", "search", "data", "tell", "what", "how", "where"]) or
+            len(query_lower.split()) > 3  # Longer queries likely need data
+        )
         
-        is_complex = (analytical_score > 1 or 
-                     (analytical_score > 0 and (temporal_score > 0 or spatial_score > 0)) or
-                     (argo_score > 2 and temporal_score > 0 and spatial_score > 0))
+        # More balanced complexity assessment
+        is_complex = (
+            analytical_score > 1 or 
+            (analytical_score > 0 and (temporal_score > 0 or spatial_score > 0)) or
+            (argo_score > 2 and temporal_score > 0 and spatial_score > 0) or
+            any(word in query_lower for word in ["compare", "correlation", "trend", "pattern", "analysis"])
+        )
         
-        needs_visualization = viz_score > 0 or (needs_data and argo_score > 0)  # More selective viz
+        # Be more generous with visualizations - they help understanding
+        needs_visualization = (
+            viz_score > 0 or 
+            (needs_data and argo_score > 0) or
+            any(word in query_lower for word in ["where", "location", "depth", "profile"])
+        )
         
-        # Determine confidence level
+        # More forgiving confidence scoring
         total_score = argo_score + temporal_score + spatial_score + analytical_score
-        confidence = min(1.0, total_score / 5)
+        confidence = min(1.0, max(0.3, total_score / 4))  # Minimum confidence boost
         
-        # Determine query complexity level
+        # Simplified complexity levels - favor simple/moderate over complex
         complexity_level = "simple"
-        if analytical_score > 1 or (analytical_score > 0 and (temporal_score > 0 or spatial_score > 0)):
+        if analytical_score > 2 or (analytical_score > 1 and (temporal_score > 1 or spatial_score > 1)):
             complexity_level = "complex"
-        elif analytical_score > 0 or (argo_score > 1):
+        elif analytical_score > 0 or argo_score > 1 or (temporal_score > 0 and spatial_score > 0):
             complexity_level = "moderate"
         
         return {

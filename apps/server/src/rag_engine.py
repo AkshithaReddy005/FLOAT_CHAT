@@ -79,41 +79,43 @@ class RAGEngine:
                          data_summary: str, classification_info: str) -> str:
         """Build comprehensive RAG prompt"""
         
-        return f"""You are FloatChat, an expert AI assistant specializing in ARGO oceanographic data analysis. You help researchers understand ocean data through clear explanations and insights.
+        return f"""You are FloatChat, a friendly and knowledgeable AI assistant for ARGO oceanographic data. You help users understand ocean measurements through natural conversation and clear explanations.
 
 User Query: "{user_query}"
 
-Query Analysis:
-{classification_info}
-
-Relevant Context from Knowledge Base:
+Available Data Context:
 {context_text}
 
-Current Query Results:
+Query Results:
 {data_summary}
 
-CRITICAL INSTRUCTIONS - READ CAREFULLY:
-1. KNOWLEDGE BOUNDARY AWARENESS: If the context from the knowledge base is limited or says "No relevant context found" or "No specific context found", and the user asks about specific oceanographic phenomena, concepts, or locations that are NOT covered in the available context, you MUST clearly state that you don't have sufficient information in the knowledge base to provide a comprehensive answer about that specific topic.
+RESPONSE GUIDELINES:
+🌊 **Be Conversational**: Respond naturally, like talking to a colleague. Use "I found..." or "Based on the data..." instead of formal structures.
 
-2. HONESTY ABOUT DATA LIMITATIONS: If no data is found matching the query criteria, clearly state this and explain possible reasons (location not covered, time period not available, etc.). Do not speculate about data that doesn't exist.
+🔍 **Balance Helpfulness with Honesty**: 
+- If you have good data, share insights enthusiastically
+- If data is limited, explain what you can see and suggest alternatives
+- For simple questions, provide simple answers
+- For complex requests, dive deeper into analysis
 
-3. STRUCTURED RESPONSE FORMAT:
-   - Start with a clear, direct answer to the question
-   - Use bullet points or numbered lists for key findings
-   - Separate data insights from general context
-   - End with actionable suggestions or next steps
+💬 **Flexible Communication**:
+- Match the user's tone (casual questions → casual answers, technical requests → detailed analysis)  
+- Don't force structured formats unless the query is complex
+- Use bullet points only when listing multiple items makes sense
+- Feel free to ask follow-up questions to help better
 
-4. RESPONSE STRUCTURE:
-   • **Direct Answer**: [Clear response to the user's question]
-   • **Key Findings from Data**: [Bullet points of main insights from actual results]
-   • **Context**: [Only include relevant background if available in knowledge base]
-   • **Interpretation**: [What the findings suggest about ocean conditions]
+📊 **Data Transparency**:
+- When you have relevant data, share it with confidence
+- When data is sparse, explain what's available and suggest related queries
+- If no data matches, suggest similar or nearby measurements
 
-5. Be conversational but scientifically accurate
-6. Keep responses concise and well-structured for better readability
-7. If you're unsure about any aspect due to limited context, explicitly state this limitation
+🤝 **Be Helpful**:
+- Offer practical suggestions and next steps
+- Share interesting patterns you notice
+- Connect findings to broader oceanographic context when relevant
+- Don't be overly cautious - users want insights, not disclaimers
 
-Remember: It's better to admit knowledge limitations than to provide potentially incorrect information."""
+Remember: You're here to help users explore ocean data. Be informative, friendly, and genuinely useful. If a question is simple, keep your answer simple. If it's complex, provide the depth they're looking for."""
     
     def _format_context(self, context_docs: List[str]) -> str:
         """Format context documents for the prompt"""
@@ -205,15 +207,15 @@ Remember: It's better to admit knowledge limitations than to provide potentially
         """Generate response using rule-based approach when LLM is not available"""
         
         if not db_results:
-            return ("**Direct Answer**: No ARGO measurements were found matching your specific query criteria.\n\n"
-                   "**Possible Reasons**:\n"
-                   "• The requested location may not be covered by our ARGO float network\n"
-                   "• The time period specified might not have available data\n"
-                   "• The parameter combination requested may not exist in our database\n\n"
-                   "**Suggestions**:\n"
-                   "• Try broadening your search criteria (wider date range or geographic area)\n"
-                   "• Check if similar regions have available data\n"
-                   "• Use our data visualization tools to explore what's available")
+            return ("I couldn't find any ARGO measurements that match your specific query. This might be because:\n\n"
+                   "• The location you're interested in isn't covered by our ARGO float network yet\n"
+                   "• The time period you mentioned doesn't have available data\n"
+                   "• The specific combination of parameters you're looking for isn't in our database\n\n"
+                   "Here are some things you could try:\n"
+                   "• Broaden your search area or time range\n"
+                   "• Check what data is available using the 'What data is available?' button\n"
+                   "• Try asking about similar regions or related measurements\n\n"
+                   "Feel free to ask me about what data we do have - I'm here to help you explore!")
         
         # Statistical summary
         count = len(db_results)
@@ -222,45 +224,45 @@ Remember: It's better to admit knowledge limitations than to provide potentially
         salinities = [r['salinity'] for r in db_results if r['salinity'] is not None]
         depths = [r['depth'] for r in db_results if r['depth'] is not None]
         
-        # Build structured response
+        # Build conversational response
         response_parts = []
         
-        # Direct answer
-        response_parts.append(f"**Direct Answer**: Found {count} ARGO measurements from {unique_floats} different floats matching your query.")
+        # Friendly opening
+        response_parts.append(f"Great! I found {count} ARGO measurements from {unique_floats} different floats that match what you're looking for.")
         
-        # Key findings
+        # Key findings in natural language
         findings = []
         if temps:
             avg_temp = sum(temps) / len(temps)
             min_temp, max_temp = min(temps), max(temps)
-            findings.append(f"Temperature: {min_temp:.1f}°C to {max_temp:.1f}°C (avg: {avg_temp:.1f}°C)")
+            findings.append(f"Temperature ranges from {min_temp:.1f}°C to {max_temp:.1f}°C (average: {avg_temp:.1f}°C)")
         
         if salinities:
             avg_sal = sum(salinities) / len(salinities)
             min_sal, max_sal = min(salinities), max(salinities)
-            findings.append(f"Salinity: {min_sal:.2f} to {max_sal:.2f} (avg: {avg_sal:.2f})")
+            findings.append(f"Salinity values span {min_sal:.2f} to {max_sal:.2f} (average: {avg_sal:.2f})")
         
         if depths:
             min_depth, max_depth = min(depths), max(depths)
-            findings.append(f"Depth range: {min_depth:.0f}m to {max_depth:.0f}m")
+            findings.append(f"Measurements taken from {min_depth:.0f}m to {max_depth:.0f}m depth")
         
         if findings:
-            response_parts.append("**Key Findings from Data**:\n• " + "\n• ".join(findings))
+            response_parts.append("Here's what I found:\n\n" + "\n".join([f"• {finding}" for finding in findings]))
         
-        # Interpretation
-        interpretation = []
+        # Add some insight
+        insights = []
         if depths:
             if max_depth > 1000:
-                interpretation.append("Data includes deep ocean measurements, providing insights into deep water properties")
+                insights.append("The data includes deep ocean measurements, which is great for understanding deep water properties and ocean circulation patterns.")
             elif max_depth > 200:
-                interpretation.append("Data covers surface and mid-depth waters, showing vertical ocean structure")
+                insights.append("This covers both surface and mid-depth waters, giving you a nice view of the vertical ocean structure.")
             else:
-                interpretation.append("Data focuses on surface and near-surface waters")
+                insights.append("The measurements focus on surface and near-surface waters, perfect for studying upper ocean conditions.")
         
-        if interpretation:
-            response_parts.append("**Interpretation**: " + ". ".join(interpretation) + ".")
+        if insights:
+            response_parts.append("\n" + insights[0])
         
-        # Visualization note
-        response_parts.append("**Visualizations**: Interactive charts below show spatial distribution, depth profiles, and temporal patterns.")
+        # Encourage exploration
+        response_parts.append("\nYou can explore the data further using the interactive maps and depth profiles below. Feel free to ask me more specific questions about what you see!")
         
-        return "\n\n".join(response_parts)
+        return "\n".join(response_parts)

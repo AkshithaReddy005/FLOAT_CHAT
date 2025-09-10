@@ -13,7 +13,7 @@ from dotenv import load_dotenv
 from database import get_db, create_tables, ArgoMeasurement, UploadedFile
 from vector_store import VectorStore
 from netcdf_processor import NetCDFProcessor
-from chatbot_service_new import ChatbotService
+from chatbot_service import ChatbotService
 from example_query_generator import ExampleQueryGenerator
 
 # Load environment variables
@@ -34,13 +34,6 @@ app.add_middleware(
         # Frontend servers
         f"http://{FRONTEND_HOST}:{FRONTEND_PORT}",
         f"http://127.0.0.1:{FRONTEND_PORT}",
-        # Keep for backward compatibility during development
-        "http://localhost:5173", 
-        "http://localhost:5174", 
-        "http://localhost:3000",
-        "http://127.0.0.1:5173", 
-        "http://127.0.0.1:5174", 
-        "http://127.0.0.1:3000",
         # API server itself for any internal calls
         f"http://{BACKEND_HOST}:{BACKEND_PORT}",
         f"http://127.0.0.1:{BACKEND_PORT}"
@@ -233,6 +226,200 @@ async def upload_file(file: UploadFile = File(...), db: Session = Depends(get_db
         # Clean up temporary file
         if temp_file_path:
             _safe_delete_file(temp_file_path)
+
+@app.post("/admin/upload-multiple")
+async def upload_multiple_files(files: List[UploadFile] = File(...), db: Session = Depends(get_db)):
+    """Admin endpoint to upload multiple ARGO NetCDF files with batch processing"""
+    
+    if not files:
+        raise HTTPException(status_code=400, detail="No files provided.")
+    
+    if len(files) > 20:  # Reasonable limit for batch processing
+        raise HTTPException(status_code=400, detail="Too many files. Maximum 20 files allowed per batch.")
+    
+    results = []
+    total_new_measurements = 0
+    total_duplicates = 0
+    total_errors = 0
+    
+    for i, file in enumerate(files):
+        file_result = {
+            "filename": file.filename,
+            "index": i + 1,
+            "status": "processing"
+        }
+        
+        temp_file_path = None
+        try:
+            # Validate file type
+            if not file.filename or not file.filename.endswith(('.nc', '.netcdf')):
+                file_result.update({
+                    "status": "error",
+                    "error": "Invalid file format. Only NetCDF files are allowed.",
+                    "measurements_count": 0
+                })
+                total_errors += 1
+                results.append(file_result)
+                continue
+            
+            # Read file content and calculate hash
+            content = await file.read()
+            file_hash = hashlib.sha256(content).hexdigest()
+            file_size = len(content)
+            
+            # Check if this exact file has been uploaded before
+            existing_file = db.query(UploadedFile).filter(UploadedFile.file_hash == file_hash).first()
+            if existing_file:
+                file_result.update({
+                    "status": "duplicate_file",
+                    "message": f"File already uploaded on {existing_file.upload_date}",
+                    "measurements_count": 0,
+                    "existing_measurements": existing_file.measurements_count,
+                    "original_upload_date": existing_file.upload_date.isoformat()
+                })
+                total_duplicates += 1
+                results.append(file_result)
+                continue
+            
+            # Create temporary file
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.nc') as temp_file:
+                temp_file.write(content)
+                temp_file.flush()
+                temp_file_path = temp_file.name
+            
+            # Validate NetCDF file
+            if not NetCDFProcessor.validate_file(temp_file_path):
+                file_result.update({
+                    "status": "error",
+                    "error": "Invalid NetCDF file format.",
+                    "measurements_count": 0
+                })
+                total_errors += 1
+                results.append(file_result)
+                continue
+            
+            # Process the file
+            measurements = NetCDFProcessor.process_argo_file(temp_file_path)
+            
+            if not measurements:
+                file_result.update({
+                    "status": "error", 
+                    "error": "No valid measurements found in file.",
+                    "measurements_count": 0
+                })
+                total_errors += 1
+                results.append(file_result)
+                continue
+            
+            # Add file hash and measurement hash to each measurement
+            for measurement in measurements:
+                measurement['file_hash'] = file_hash
+                measurement['measurement_hash'] = ArgoMeasurement.generate_measurement_hash(
+                    measurement['float_id'],
+                    measurement['latitude'],
+                    measurement['longitude'],
+                    measurement['date'],
+                    measurement['depth']
+                )
+            
+            # Store in PostgreSQL with duplicate detection
+            db_measurements = []
+            new_measurements_count = 0
+            duplicate_measurements_count = 0
+            
+            for measurement in measurements:
+                try:
+                    # Check if this exact measurement already exists
+                    existing_measurement = db.query(ArgoMeasurement).filter(
+                        ArgoMeasurement.measurement_hash == measurement['measurement_hash']
+                    ).first()
+                    
+                    if existing_measurement:
+                        duplicate_measurements_count += 1
+                        continue
+                    
+                    db_measurement = ArgoMeasurement(**measurement)
+                    db_measurements.append(db_measurement)
+                    new_measurements_count += 1
+                    
+                except Exception as e:
+                    print(f"Error processing measurement: {e}")
+                    continue
+            
+            # Add new measurements to database
+            if db_measurements:
+                try:
+                    db.add_all(db_measurements)
+                    db.commit()
+                except IntegrityError as e:
+                    db.rollback()
+                    print(f"Integrity error (likely duplicate): {e}")
+                    # Re-count actual new measurements
+                    new_measurements_count = len([m for m in measurements 
+                                                if not db.query(ArgoMeasurement).filter(
+                                                    ArgoMeasurement.measurement_hash == m['measurement_hash']
+                                                ).first()])
+            
+            # Store in ChromaDB with duplicate detection
+            vector_results = vector_store.add_measurements(measurements, file_hash)
+            
+            # Record the uploaded file
+            uploaded_file = UploadedFile(
+                filename=file.filename,
+                file_hash=file_hash,
+                file_size=file_size,
+                measurements_count=new_measurements_count
+            )
+            db.add(uploaded_file)
+            db.commit()
+            
+            # Update file result
+            file_result.update({
+                "status": "completed" if new_measurements_count > 0 else "all_duplicates",
+                "measurements_count": new_measurements_count,
+                "duplicate_measurements": duplicate_measurements_count,
+                "total_in_file": len(measurements),
+                "vector_stats": vector_results,
+                "file_size": file_size
+            })
+            
+            total_new_measurements += new_measurements_count
+            if duplicate_measurements_count > 0:
+                total_duplicates += 1
+            
+            results.append(file_result)
+                
+        except Exception as e:
+            db.rollback()
+            file_result.update({
+                "status": "error",
+                "error": f"Processing failed: {str(e)}",
+                "measurements_count": 0
+            })
+            total_errors += 1
+            results.append(file_result)
+        
+        finally:
+            # Clean up temporary file
+            if temp_file_path:
+                _safe_delete_file(temp_file_path)
+    
+    # Prepare summary
+    successful_files = len([r for r in results if r["status"] == "completed"])
+    duplicate_files = len([r for r in results if r["status"] == "duplicate_file"])
+    
+    return {
+        "message": f"Batch upload completed: {successful_files} files processed successfully, {duplicate_files} duplicates, {total_errors} errors",
+        "summary": {
+            "total_files": len(files),
+            "successful_files": successful_files,
+            "duplicate_files": duplicate_files,
+            "error_files": total_errors,
+            "total_new_measurements": total_new_measurements
+        },
+        "file_results": results,
+        "status": "batch_completed"
+    }
 
 def _safe_delete_file(file_path: str, max_attempts: int = 5, delay: float = 0.1):
     """Safely delete a file with retry logic for Windows file locking issues"""

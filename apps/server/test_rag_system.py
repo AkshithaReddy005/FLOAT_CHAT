@@ -13,7 +13,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
 
 from database import get_db
 from vector_store import VectorStore
-from chatbot_service_new import ChatbotService
+from chatbot_service import ChatbotService
 
 load_dotenv()
 
