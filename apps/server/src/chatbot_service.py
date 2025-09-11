@@ -31,7 +31,7 @@ class ChatbotService:
         
         print("Enhanced Chatbot Service initialized with modular RAG components")
     
-    async def process_chat_query(self, user_query: str, db: Session) -> Dict:
+    async def process_chat_query(self, user_query: str, db: Session, session_context: dict = None) -> Dict:
         """Process a natural language query using enhanced RAG pipeline"""
         
         try:
@@ -70,9 +70,9 @@ class ChatbotService:
         
         if query_classification["needs_data"]:
             try:
-                # Generate and execute SQL query
+                # Generate and execute SQL query with session context
                 sql_query = await self.sql_generator.generate_sql(
-                    user_query, query_classification, context_results
+                    user_query, query_classification, context_results, session_context
                 )
                 
                 if sql_query and self.sql_generator.validate_sql(sql_query):
@@ -93,9 +93,9 @@ class ChatbotService:
                 db_results = self._fallback_data_retrieval(db, user_query)
         
         try:
-            # Step 4: Generate AI response using RAG
+            # Step 4: Generate AI response using RAG with session context
             ai_response = await self.rag_engine.generate_response(
-                user_query, context_results, db_results, query_classification
+                user_query, context_results, db_results, query_classification, session_context
             )
         except Exception as e:
             print(f"AI response generation failed: {e}")

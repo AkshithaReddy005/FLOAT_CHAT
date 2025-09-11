@@ -7,7 +7,7 @@ import os
 import tempfile
 import time
 import hashlib
-from typing import List
+from typing import List, Optional
 from dotenv import load_dotenv
 
 from database import get_db, create_tables, ArgoMeasurement, UploadedFile
@@ -67,6 +67,7 @@ class QueryResponse(BaseModel):
 
 class ChatRequest(BaseModel):
     message: str
+    session_context: Optional[dict] = None
 
 class ChatResponse(BaseModel):
     response: str
@@ -523,8 +524,8 @@ async def chat_with_data(request: ChatRequest, db: Session = Depends(get_db)):
     """Chat endpoint for natural language queries about ARGO data"""
     
     try:
-        # Process the chat query using the chatbot service
-        result = await chatbot_service.process_chat_query(request.message, db)
+        # Process the chat query using the chatbot service with context
+        result = await chatbot_service.process_chat_query(request.message, db, request.session_context)
         
         # Convert data to ArgoMeasurementDict format for consistency
         data_dicts = []

@@ -93,22 +93,22 @@ const DepthProfile: React.FC<DepthProfileProps> = ({ data, className = '' }) => 
       font: { size: 18, color: '#1f2937' }
     },
     xaxis: {
-      title: 'Temperature (°C)',
+      title: { text: 'Temperature (°C)' },
       domain: [0, 0.45],
       showgrid: true,
       gridcolor: '#e5e7eb',
       color: '#374151'
     },
     xaxis2: {
-      title: 'Salinity (PSU)',
+      title: { text: 'Salinity (PSU)' },
       domain: [0.55, 1],
       showgrid: true,
       gridcolor: '#e5e7eb',
       color: '#374151'
     },
     yaxis: {
-      title: 'Depth (m)',
-      autorange: 'reversed',
+      title: { text: 'Depth (m)' },
+      autorange: 'reversed' as const,
       showgrid: true,
       gridcolor: '#e5e7eb',
       color: '#374151'
@@ -124,14 +124,14 @@ const DepthProfile: React.FC<DepthProfileProps> = ({ data, className = '' }) => 
     margin: { l: 60, r: 150, t: 60, b: 60 },
     plot_bgcolor: '#f9fafb',
     paper_bgcolor: 'white',
-    hovermode: 'closest',
+    hovermode: 'closest' as const,
     showlegend: true
   };
 
   const config = {
     responsive: true,
     displayModeBar: true,
-    modeBarButtonsToRemove: ['pan2d', 'lasso2d', 'select2d'],
+    modeBarButtonsToRemove: ['pan2d', 'lasso2d', 'select2d'] as any,
     displaylogo: false
   };
 

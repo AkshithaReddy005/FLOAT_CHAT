@@ -55,6 +55,19 @@ class ApiService {
     });
   }
 
+  async chatWithContextData(message: string, context?: any): Promise<ChatResponse> {
+    return this.makeRequest<ChatResponse>('/chat', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ 
+        message,
+        session_context: context 
+      }),
+    });
+  }
+
   async reinitializeConnections(): Promise<any> {
     return this.makeRequest<any>('/admin/reinitialize', {
       method: 'POST',
