@@ -232,8 +232,6 @@ class QueryClassifier:
                 if pattern in query_lower:
                     parts = query_lower.split(pattern)
                     if len(parts) == 2:
-                        before = parts[0].strip().split()
-                        after = parts[1].strip().split()
                         
                         # Extract parameter from before 'vs'
                         for param in ['temperature', 'temp', 'salinity', 'salt', 'pressure', 'depth']:

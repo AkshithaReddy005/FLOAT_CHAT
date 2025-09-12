@@ -7,7 +7,7 @@ from typing import Dict, List, Any, Optional, Tuple
 import statistics
 from collections import defaultdict
 import math
-from chart_request_processor import ChartRequestProcessor
+from utils.chart_request_processor import ChartRequestProcessor
 
 
 class VisualizationBuilder:
@@ -1009,7 +1009,7 @@ class VisualizationBuilder:
         print(f"db_results count: {len(db_results) if db_results else 0}")
         
         # Import here to avoid circular dependency issues
-        from query_classifier import QueryClassifier
+        from rag_pipeline.query_classifier import QueryClassifier
         
         # Check if this is a chart request
         classifier = QueryClassifier()

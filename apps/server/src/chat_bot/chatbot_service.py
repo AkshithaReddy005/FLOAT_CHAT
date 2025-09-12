@@ -3,18 +3,17 @@ Enhanced Chatbot Service with Modular RAG Implementation
 Uses separated modules for query classification, SQL generation, visualization, and RAG responses.
 """
 
-import os
 from typing import Dict, List
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 from dotenv import load_dotenv
 
-from database import ArgoMeasurement
-from vector_store import VectorStore
-from query_classifier import QueryClassifier
-from sql_generator import SQLGenerator
-from visualization_builder import VisualizationBuilder
-from rag_engine import RAGEngine
+from database.database import ArgoMeasurement
+from rag_pipeline.vector_store import VectorStore
+from rag_pipeline.query_classifier import QueryClassifier
+from rag_pipeline.sql_generator import SQLGenerator
+from utils.visualization_builder import VisualizationBuilder
+from rag_pipeline.rag_engine import RAGEngine
 
 load_dotenv()
 
@@ -381,8 +380,7 @@ class ChatbotService:
             except:
                 return []
 
-    def _generate_emergency_response(self, user_query: str, db_results: List[Dict], 
-                                   query_classification: Dict) -> str:
+    def _generate_emergency_response(self, user_query: str, db_results: List[Dict]) -> str:
         """Generate an emergency response when AI response generation fails"""
         
         if not db_results:
@@ -451,26 +449,26 @@ class ChatbotService:
         
         # Determine appropriate limit based on query characteristics
         if any(word in query_lower for word in ['sample', 'example', 'few', 'some']):
-            limit = 15  # Reduced from 20
+            limit = 15  
         elif any(word in query_lower for word in ['specific', 'exact', 'precise']):
-            limit = 25  # Reduced from 50
+            limit = 25
         elif any(word in query_lower for word in ['trend', 'pattern', 'analysis', 'compare']):
-            limit = 75  # Reduced from 150
+            limit = 75 
         elif query_classification.get("complexity_level") == "complex":
-            limit = 100  # Reduced from 200
+            limit = 100 
         elif any(word in query_lower for word in ['all', 'every', 'total', 'complete']):
-            limit = 150  # Reduced from 300
+            limit = 150 
         else:
             # Default intelligent limiting based on data characteristics
             unique_locations = len(set((r.get('latitude', 0), r.get('longitude', 0)) for r in db_results))
             unique_depths = len(set(r.get('depth', 0) for r in db_results if r.get('depth') is not None))
             unique_dates = len(set(str(r.get('date', ''))[:10] for r in db_results if r.get('date')))
             
-            # More conservative adaptive limit based on data diversity
+            # Conservative adaptive limit based on data diversity
             if unique_locations > 20 or unique_depths > 15 or unique_dates > 10:
-                limit = 60  # Reduced from 100
+                limit = 60  
             else:
-                limit = 40   # Reduced from 75
+                limit = 40  
         
         # Smart sampling to maintain representativeness
         if len(db_results) <= limit:
@@ -578,8 +576,6 @@ class ChatbotService:
         """Retrieve data optimized for chart generation based on chart type and parameters"""
         try:
             chart_type = chart_classification.get("chart_type", "line")
-            x_axis = chart_classification.get("x_axis", "")
-            y_axis = chart_classification.get("y_axis", "")
             
             # Build optimized query based on chart requirements - ensure only real data
             conditions = [
@@ -588,7 +584,6 @@ class ChatbotService:
                 "latitude != 0", 
                 "longitude != 0"
             ]
-            parameters = []
             
             # Always ensure we have the required data for the chart
             if chart_type in ["scatter", "line"] and ("temperature" in user_query.lower() or "temp" in user_query.lower()):

@@ -13,8 +13,8 @@ from dotenv import load_dotenv
 # Add the src directory to the path so we can import our modules
 sys.path.append(os.path.join(os.path.dirname(__file__), 'src'))
 
-from database import ArgoMeasurement
-from vector_store import VectorStore
+from database.database import ArgoMeasurement
+from rag_pipeline.vector_store import VectorStore
 
 load_dotenv()
 

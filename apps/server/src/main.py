@@ -11,11 +11,11 @@ import hashlib
 from typing import List, Optional
 from dotenv import load_dotenv
 
-from database import get_db, create_tables, ArgoMeasurement, UploadedFile
-from vector_store import VectorStore
-from netcdf_processor import NetCDFProcessor
-from chatbot_service import ChatbotService
-from example_query_generator import ExampleQueryGenerator
+from database.database import get_db, create_tables, ArgoMeasurement, UploadedFile
+from rag_pipeline.vector_store import VectorStore
+from utils.netcdf_processor import NetCDFProcessor
+from chat_bot.chatbot_service import ChatbotService
+from utils.example_query_generator import ExampleQueryGenerator
 
 # Load environment variables
 load_dotenv()
@@ -657,7 +657,7 @@ def health_check(db: Session = Depends(get_db)):
     
     try:
         # Check RAG components
-        from rag_engine import RAGEngine
+        from rag_pipeline.rag_engine import RAGEngine
         rag_test = RAGEngine()
         health_status["components"]["rag_engine"] = {
             "status": "healthy",

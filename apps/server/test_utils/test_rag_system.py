@@ -11,9 +11,9 @@ from dotenv import load_dotenv
 # Add the src directory to the Python path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
 
-from database import get_db
-from vector_store import VectorStore
-from chatbot_service import ChatbotService
+from database.database import get_db
+from rag_pipeline.vector_store import VectorStore
+from chat_bot.chatbot_service import ChatbotService
 
 load_dotenv()
 

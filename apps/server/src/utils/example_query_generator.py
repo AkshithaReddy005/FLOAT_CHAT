@@ -3,12 +3,10 @@ Dynamic Example Query Generator
 Generates relevant example queries based on the actual data available in the knowledge base.
 """
 
-import os
-from typing import List, Dict, Set
+from typing import List, Dict
 from sqlalchemy.orm import Session
 from sqlalchemy import text
-from database import ArgoMeasurement
-from vector_store import VectorStore
+from rag_pipeline.vector_store import VectorStore
 from dotenv import load_dotenv
 
 load_dotenv()

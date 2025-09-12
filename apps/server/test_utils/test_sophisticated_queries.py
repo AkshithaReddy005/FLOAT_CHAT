@@ -10,8 +10,8 @@ import os
 # Add the src directory to path
 sys.path.append(os.path.join(os.path.dirname(__file__), 'src'))
 
-from sql_generator import SQLGenerator
-from query_classifier import QueryClassifier
+from rag_pipeline.sql_generator import SQLGenerator
+from rag_pipeline.query_classifier import QueryClassifier
 
 async def test_sophisticated_queries():
     """Test various sophisticated query patterns"""
