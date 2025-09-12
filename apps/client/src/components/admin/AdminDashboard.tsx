@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Layout } from '../common/Layout';
 import { FileUpload } from './FileUpload';
+import { KnowledgeBaseDetails } from './KnowledgeBaseDetails';
 import { useUpload } from '../../hooks/useUpload';
 import { apiService } from '../../services/api';
 import { Button } from '../common/Button';
@@ -27,6 +28,7 @@ export const AdminDashboard = () => {
   const [clearStatus, setClearStatus] = useState<string>('');
   const [showClearConfirm, setShowClearConfirm] = useState(false);
   const [statsLoading, setStatsLoading] = useState(false);
+  const [showKnowledgeBaseDetails, setShowKnowledgeBaseDetails] = useState(false);
 
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -131,7 +133,8 @@ export const AdminDashboard = () => {
                 </div>
               </div>
 
-              <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4">
+              <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4 cursor-pointer hover:bg-emerald-100 transition-colors"
+                   onClick={() => setShowKnowledgeBaseDetails(true)}>
                 <div className="flex items-center gap-3">
                   <div className="w-10 h-10 bg-emerald-500 rounded-lg flex items-center justify-center">
                     <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -141,7 +144,7 @@ export const AdminDashboard = () => {
                   <div>
                     <p className="text-sm font-semibold text-emerald-800">ChromaDB</p>
                     <p className="text-2xl font-bold text-emerald-900">{stats.vector_store.total_measurements.toLocaleString()}</p>
-                    <p className="text-xs text-emerald-600">vectors</p>
+                    <p className="text-xs text-emerald-600">vectors • Click for details</p>
                   </div>
                 </div>
               </div>
@@ -276,6 +279,11 @@ export const AdminDashboard = () => {
               </div>
             </div>
           </div>
+        )}
+
+        {/* Knowledge Base Details Modal */}
+        {showKnowledgeBaseDetails && (
+          <KnowledgeBaseDetails onClose={() => setShowKnowledgeBaseDetails(false)} />
         )}
       </div>
     </Layout>

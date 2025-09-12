@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import OceanMap from '../visualization/OceanMap';
 import DepthProfile from '../visualization/DepthProfile';
+import CustomChart from '../visualization/CustomChart';
 import { ResultsGrid } from '../researcher/ResultsGrid';
 import type { ChatResponse, ArgoMeasurement } from '../../types';
 
@@ -9,7 +10,7 @@ interface VisualizationCardProps {
   results: ArgoMeasurement[];
 }
 
-type TabType = 'data' | 'map' | 'profile';
+type TabType = 'data' | 'map' | 'profile' | 'custom';
 
 export const VisualizationCard: React.FC<VisualizationCardProps> = ({
   chatResponse,
@@ -21,30 +22,75 @@ export const VisualizationCard: React.FC<VisualizationCardProps> = ({
   // Transform data for visualizations
   const mapPoints = chatResponse?.visualization?.map?.points || [];
   const depthProfileData = chatResponse?.visualization?.depth_profile?.data || [];
+  const customChart = chatResponse?.visualization?.custom_chart;
+  const chartRequestInfo = chatResponse?.visualization?.chart_request_info;
+  const vizReasoning = chatResponse?.visualization?.reasoning || '';
+  const chartRecommendations = chatResponse?.visualization?.chart_recommendations || [];
 
-  // Determine which tabs to show based on available data
-  const availableTabs = {
-    data: results.length > 0,
-    map: mapPoints.length > 0,
-    profile: depthProfileData.length > 0
+  // Helper function to check if data is real/meaningful
+  const isRealData = (data: ArgoMeasurement[]) => {
+    return data.some(item => {
+      // Check if data has real values (not all zeros/nulls)
+      const hasRealCoords = item.latitude !== 0 && item.longitude !== 0 && 
+                          item.latitude != null && item.longitude != null;
+      const hasRealMeasurements = (item.temperature !== 0 && item.temperature != null) ||
+                                (item.salinity !== 0 && item.salinity != null) ||
+                                (item.depth !== 0 && item.depth != null);
+      const hasRealFloatId = item.float_id && 
+                           !item.float_id.includes('float_1') && 
+                           !item.float_id.includes('000000') &&
+                           item.float_id !== '';
+      
+      return hasRealCoords && hasRealMeasurements && hasRealFloatId;
+    });
   };
 
-  // Set default active tab to first available
+  // Check if we have meaningful visualization data beyond just raw results
+  // Custom charts should always be considered meaningful visualization data
+  const hasVisualizationData = mapPoints.length > 0 || depthProfileData.length > 0 || !!customChart;
+  
+  // Only show if we have real data
+  const hasRealResults = results.length > 0 && isRealData(results);
+
+  // Determine which tabs to show based on available data
+  const availableTabs = useMemo(
+    () => ({
+      custom: !!customChart,
+      data: hasRealResults, // Only show data tab if we have real, meaningful results
+      map: mapPoints.length > 0 && hasRealResults,
+      profile: depthProfileData.length > 0 && hasRealResults
+    }),
+    [customChart, hasRealResults, mapPoints.length, depthProfileData.length]
+  );
+
+  // Set default active tab to first available (prioritize custom charts)
   React.useEffect(() => {
     if (!availableTabs[activeTab]) {
-      if (availableTabs.data) setActiveTab('data');
+      if (availableTabs.custom) setActiveTab('custom');
+      else if (availableTabs.data) setActiveTab('data');
       else if (availableTabs.map) setActiveTab('map');
       else if (availableTabs.profile) setActiveTab('profile');
     }
   }, [availableTabs, activeTab]);
 
-  // Don't render if no data to visualize
-  if (!availableTabs.data && !availableTabs.map && !availableTabs.profile) {
+  // Don't render if no meaningful visualization data OR no real data is available
+  if (!hasVisualizationData && !hasRealResults) {
+    return null;
+  }
+  
+  // Don't render if we only have fake/sample data
+  if (results.length > 0 && !isRealData(results) && !customChart) {
     return null;
   }
 
   const getTabIcon = (tab: TabType) => {
     switch (tab) {
+      case 'custom':
+        return (
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z" />
+          </svg>
+        );
       case 'data':
         return (
           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -71,6 +117,8 @@ export const VisualizationCard: React.FC<VisualizationCardProps> = ({
 
   const getTabLabel = (tab: TabType) => {
     switch (tab) {
+      case 'custom':
+        return `Custom Chart`;
       case 'data':
         return `Data (${results.length})`;
       case 'map':
@@ -98,11 +146,11 @@ export const VisualizationCard: React.FC<VisualizationCardProps> = ({
           
           <button
             onClick={() => setIsExpanded(!isExpanded)}
-            className="text-sm text-blue-600 hover:text-blue-700 font-medium flex items-center space-x-1"
+            className="text-sm text-blue-600 hover:text-blue-700 font-medium flex items-center space-x-1 transition-colors"
           >
             <span>{isExpanded ? 'Collapse' : 'Expand'}</span>
             <svg 
-              className={`w-4 h-4 transition-transform ${isExpanded ? 'rotate-180' : ''}`}
+              className={`w-4 h-4 transition-transform duration-200 ${isExpanded ? 'rotate-180' : ''}`}
               fill="none" 
               stroke="currentColor" 
               viewBox="0 0 24 24"
@@ -111,6 +159,22 @@ export const VisualizationCard: React.FC<VisualizationCardProps> = ({
             </svg>
           </button>
         </div>
+
+        {/* Visualization Reasoning */}
+        {vizReasoning && (
+          <div className="mt-3 mb-2">
+            <div className="flex items-start space-x-2 text-xs">
+              <div className="flex-shrink-0 mt-0.5">
+                <svg className="w-3 h-3 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+              </div>
+              <div className="text-gray-600 flex-1">
+                <span className="font-medium text-blue-700">Chart Selection:</span> {vizReasoning}
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Tabs */}
         <div className="mt-3 flex space-x-1 overflow-x-auto">
@@ -140,9 +204,39 @@ export const VisualizationCard: React.FC<VisualizationCardProps> = ({
 
       {/* Content */}
       <div className={`transition-all duration-300 overflow-hidden ${
-        isExpanded ? 'max-h-[800px]' : 'max-h-[400px]'
+        isExpanded ? 'max-h-none' : 'max-h-0'
       }`}>
-        <div className="p-4">
+        <div className="p-4 max-h-[800px] overflow-y-auto overflow-x-auto">
+          {activeTab === 'custom' && availableTabs.custom && customChart && (
+            <div>
+              <div className="mb-3">
+                <h4 className="text-sm font-semibold text-gray-800 mb-1">
+                  Custom Chart
+                </h4>
+                <p className="text-xs text-gray-600">
+                  AI-generated chart based on your request
+                  {chartRequestInfo?.explanation && (
+                    <span className="ml-2 text-blue-600">• {chartRequestInfo.explanation}</span>
+                  )}
+                </p>
+              </div>
+              <CustomChart 
+                chartConfig={{
+                  data: customChart.data || [],
+                  layout: customChart.layout || {},
+                  config: customChart.config || {}
+                }}
+                chartRequestInfo={chartRequestInfo ? {
+                  title: chartRequestInfo.title || customChart.title || 'Custom Chart',
+                  explanation: chartRequestInfo.explanation || '',
+                  chart_type: chartRequestInfo.chart_type || 'line',
+                  x_axis: chartRequestInfo.x_axis || 'X Axis',
+                  y_axis: chartRequestInfo.y_axis || 'Y Axis'
+                } : undefined}
+              />
+            </div>
+          )}
+
           {activeTab === 'data' && availableTabs.data && (
             <div className="overflow-x-auto">
               <ResultsGrid results={results} />
@@ -157,7 +251,18 @@ export const VisualizationCard: React.FC<VisualizationCardProps> = ({
                 </h4>
                 <p className="text-xs text-gray-600">
                   Interactive map showing {mapPoints.length} data points
+                  {chatResponse?.visualization?.map?.reason && (
+                    <span className="ml-2 text-blue-600">• {chatResponse.visualization.map.reason}</span>
+                  )}
                 </p>
+                {chatResponse?.visualization?.map?.recommended_type && (
+                  <div className="mt-1 text-xs text-gray-500 flex items-center space-x-1">
+                    <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
+                    </svg>
+                    <span>Optimized as {chatResponse.visualization.map.recommended_type.replace(/_/g, ' ')}</span>
+                  </div>
+                )}
               </div>
               <div className="rounded-lg overflow-hidden border border-gray-200">
                 <OceanMap points={mapPoints} />
@@ -173,7 +278,20 @@ export const VisualizationCard: React.FC<VisualizationCardProps> = ({
                 </h4>
                 <p className="text-xs text-gray-600">
                   Depth profiles from {depthProfileData.length} measurements
+                  {chatResponse?.visualization?.depth_profile?.depth_range && (
+                    <span className="ml-2 text-blue-600">
+                      • {chatResponse.visualization.depth_profile.depth_range.min}m to {chatResponse.visualization.depth_profile.depth_range.max}m depth
+                    </span>
+                  )}
                 </p>
+                {chartRecommendations?.find((r: { type: string; reason: string }) => r.type === 'depth_profile')?.reason && (
+                  <div className="mt-1 text-xs text-gray-500 flex items-center space-x-1">
+                    <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
+                    </svg>
+                    <span>{chartRecommendations.find((r: { type: string; reason: string }) => r.type === 'depth_profile')?.reason}</span>
+                  </div>
+                )}
               </div>
               <div className="rounded-lg overflow-hidden border border-gray-200">
                 <DepthProfile data={depthProfileData} />
@@ -197,6 +315,12 @@ export const VisualizationCard: React.FC<VisualizationCardProps> = ({
               <span className="flex items-center space-x-1">
                 <div className="w-2 h-2 bg-emerald-500 rounded-full"></div>
                 <span>{mapPoints.length} locations</span>
+              </span>
+            )}
+            {customChart && (
+              <span className="flex items-center space-x-1">
+                <div className="w-2 h-2 bg-orange-500 rounded-full"></div>
+                <span>custom chart</span>
               </span>
             )}
             {depthProfileData.length > 0 && (

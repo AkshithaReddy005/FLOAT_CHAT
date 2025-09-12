@@ -1,4 +1,5 @@
 import type { Message } from '../components/chat/ChatInterface';
+import type { ChatResponse } from '../types';
 
 interface SessionContext {
   messages: Message[];
@@ -103,8 +104,10 @@ export class SessionContextManager {
   private extractKeyContext(userMessage: string, keyContext: SessionContext['keyContext']): void {
     const message = userMessage.toLowerCase();
 
-    // Extract locations
+    // Extract locations with better patterns and context inference
     const locationPatterns = [
+      /mumbai/gi,
+      /bombay/gi,
       /indian\s+coast/gi,
       /arabian\s+sea/gi,
       /bay\s+of\s+bengal/gi,
@@ -114,7 +117,8 @@ export class SessionContextManager {
       /mediterranean/gi,
       /near\s+(\w+)/gi,
       /(\w+)\s+sea/gi,
-      /(\w+)\s+ocean/gi
+      /(\w+)\s+ocean/gi,
+      /(\w+)\s+coast/gi
     ];
 
     locationPatterns.forEach(pattern => {
@@ -128,6 +132,16 @@ export class SessionContextManager {
         });
       }
     });
+
+    // Infer context from relative references like "what about below 1000m"
+    if (message.includes('below') || message.includes('above') || message.includes('deeper') || 
+        message.includes('shallower') || message.includes('there') || message.includes('that area')) {
+      // Preserve recent location context more aggressively
+      const recentLocation = keyContext.locations[keyContext.locations.length - 1];
+      if (recentLocation && !keyContext.locations.slice(-3).includes(recentLocation)) {
+        keyContext.locations.push(recentLocation);
+      }
+    }
 
     // Extract time ranges
     const timePatterns = [
@@ -152,7 +166,7 @@ export class SessionContextManager {
       }
     });
 
-    // Extract data types
+    // Extract data types and depth context
     const dataTypePatterns = [
       /temperature/gi,
       /salinity/gi,
@@ -162,7 +176,12 @@ export class SessionContextManager {
       /measurement/gi,
       /argo/gi,
       /float/gi,
-      /data/gi
+      /data/gi,
+      /below.*\d+m/gi,
+      /above.*\d+m/gi,
+      /\d+m.*deep/gi,
+      /surface/gi,
+      /deep.*water/gi
     ];
 
     dataTypePatterns.forEach(pattern => {
@@ -176,6 +195,16 @@ export class SessionContextManager {
         });
       }
     });
+
+    // Extract specific depth references for better context continuity
+    const depthMatches = message.match(/(?:below|above|at|around)\s*(\d+)\s*m/gi);
+    if (depthMatches) {
+      depthMatches.forEach(match => {
+        if (!keyContext.dataTypes.includes(match)) {
+          keyContext.dataTypes.push(match);
+        }
+      });
+    }
 
     // Keep only recent items (max 10 each)
     keyContext.locations = keyContext.locations.slice(-10);
@@ -201,7 +230,7 @@ export class SessionContextManager {
       
       if (userMsg && aiMsg && userMsg.isUser && !aiMsg.isUser) {
         const userQuery = userMsg.content.slice(0, 50) + (userMsg.content.length > 50 ? '...' : '');
-        const aiSummary = this.summarizeAIResponse(aiMsg.content);
+        const aiSummary = this.summarizeAIResponse(aiMsg.content, aiMsg.chatResponse);
         summaryParts.push(`Q: ${userQuery} -> A: ${aiSummary}`);
       }
     }
@@ -209,8 +238,13 @@ export class SessionContextManager {
     return summaryParts.join(' | ');
   }
 
-  private summarizeAIResponse(response: string): string {
-    // Extract key information from AI response
+  private summarizeAIResponse(response: string, chatResponse?: ChatResponse): string {
+    // Use API-generated summary if available
+    if (chatResponse?.response_summary) {
+      return chatResponse.response_summary;
+    }
+    
+    // Fallback to client-side summary generation
     const cleanResponse = response.replace(/<[^>]*>/g, ''); // Remove HTML tags
     
     // Look for key phrases that indicate what was found/discussed
@@ -277,7 +311,7 @@ export class SessionContextManager {
         const timestamp = typeof userMsg.timestamp === 'string' ? userMsg.timestamp : userMsg.timestamp.toISOString();
         recentExchanges.push({
           user_query: userMsg.content,
-          ai_response_summary: this.summarizeAIResponse(aiMsg.content),
+          ai_response_summary: this.summarizeAIResponse(aiMsg.content, aiMsg.chatResponse),
           timestamp: timestamp
         });
       }

@@ -2,6 +2,7 @@ from fastapi import FastAPI, UploadFile, File, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy import text
 from pydantic import BaseModel
 import os
 import tempfile
@@ -176,8 +177,18 @@ async def upload_file(file: UploadFile = File(...), db: Session = Depends(get_db
                                                 ArgoMeasurement.measurement_hash == m['measurement_hash']
                                             ).first()])
         
-        # Store in ChromaDB with duplicate detection
-        vector_results = vector_store.add_measurements(measurements, file_hash)
+        # Store in ChromaDB with duplicate detection (non-blocking)
+        try:
+            vector_results = vector_store.add_measurements(measurements, file_hash)
+        except Exception as vector_e:
+            print(f"Vector store operation failed: {vector_e}")
+            # Continue processing even if vector store fails
+            vector_results = {
+                "new_measurements": 0,
+                "duplicates_skipped": 0,
+                "total_processed": len(measurements),
+                "error": "Vector store operation failed but data was saved to database"
+            }
         
         # Record the uploaded file
         uploaded_file = UploadedFile(
@@ -688,6 +699,236 @@ def get_stats(db: Session = Depends(get_db)):
         "vector_store": vector_stats,
         "status": "active"
     }
+
+@app.get("/admin/knowledge-base")
+def get_knowledge_base_details(db: Session = Depends(get_db)):
+    """Get detailed knowledge base information including data distribution and RAG insights"""
+    try:
+        # Basic vector store statistics
+        vector_stats = vector_store.get_collection_stats()
+        
+        # Database statistics
+        total_measurements = db.query(ArgoMeasurement).count()
+        unique_floats = db.query(ArgoMeasurement.float_id).distinct().count()
+        
+        # Depth distribution analysis
+        depth_analysis = db.execute(text("""
+            SELECT 
+                CASE 
+                    WHEN depth < 50 THEN 'surface'
+                    WHEN depth < 200 THEN 'thermocline'
+                    WHEN depth < 1000 THEN 'intermediate'
+                    WHEN depth < 4000 THEN 'deep'
+                    ELSE 'abyssal'
+                END as depth_category,
+                COUNT(*) as count,
+                MIN(depth) as min_depth,
+                MAX(depth) as max_depth,
+                AVG(depth) as avg_depth
+            FROM argo_measurements 
+            WHERE depth IS NOT NULL
+            GROUP BY depth_category
+            ORDER BY min_depth
+        """)).fetchall()
+        
+        # Geographic distribution
+        geographic_analysis = db.execute(text("""
+            SELECT 
+                CASE
+                    WHEN latitude BETWEEN 10 AND 30 AND longitude BETWEEN 60 AND 80 THEN 'Arabian Sea'
+                    WHEN latitude BETWEEN -10 AND 10 AND longitude BETWEEN 60 AND 100 THEN 'Equatorial Indian Ocean'
+                    WHEN latitude BETWEEN -30 AND -10 AND longitude BETWEEN 60 AND 120 THEN 'Southern Indian Ocean'
+                    WHEN latitude BETWEEN -15 AND 15 AND longitude BETWEEN 40 AND 65 THEN 'Western Indian Ocean'
+                    ELSE 'Other Indian Ocean'
+                END as region,
+                COUNT(*) as measurement_count,
+                COUNT(DISTINCT float_id) as float_count,
+                MIN(latitude) as min_lat, MAX(latitude) as max_lat,
+                MIN(longitude) as min_lon, MAX(longitude) as max_lon
+            FROM argo_measurements 
+            WHERE latitude IS NOT NULL AND longitude IS NOT NULL
+            GROUP BY region
+            ORDER BY measurement_count DESC
+        """)).fetchall()
+        
+        # Temperature and salinity ranges
+        parameter_analysis = db.execute(text("""
+            SELECT 
+                COUNT(*) as total_measurements,
+                COUNT(temperature) as temp_measurements,
+                COUNT(salinity) as salinity_measurements,
+                COUNT(pressure) as pressure_measurements,
+                AVG(temperature) as avg_temp,
+                MIN(temperature) as min_temp,
+                MAX(temperature) as max_temp,
+                AVG(salinity) as avg_salinity,
+                MIN(salinity) as min_salinity,
+                MAX(salinity) as max_salinity
+            FROM argo_measurements
+        """)).fetchone()
+        
+        # Temporal distribution
+        temporal_analysis = db.execute(text("""
+            SELECT 
+                DATE_TRUNC('month', date) as month,
+                COUNT(*) as measurement_count,
+                COUNT(DISTINCT float_id) as active_floats
+            FROM argo_measurements 
+            WHERE date IS NOT NULL
+            GROUP BY month
+            ORDER BY month DESC
+            LIMIT 12
+        """)).fetchall()
+        
+        # Sample vector store documents to understand content quality
+        try:
+            sample_vectors = vector_store.collection.get(limit=5)
+            sample_documents = sample_vectors.get('documents', [])[:3] if sample_vectors else []
+        except Exception as e:
+            print(f"Failed to get sample vectors: {e}")
+            sample_documents = []
+        
+        return {
+            "knowledge_base_overview": {
+                "vector_store": vector_stats,
+                "database_measurements": total_measurements,
+                "unique_instruments": unique_floats,
+                "data_coverage_percentage": round((vector_stats.get('total_measurements', 0) / max(total_measurements, 1)) * 100, 2)
+            },
+            "depth_distribution": [
+                {
+                    "category": row[0],
+                    "count": row[1],
+                    "min_depth": float(row[2]) if row[2] is not None else None,
+                    "max_depth": float(row[3]) if row[3] is not None else None,
+                    "avg_depth": float(row[4]) if row[4] is not None else None
+                }
+                for row in depth_analysis
+            ],
+            "geographic_distribution": [
+                {
+                    "region": row[0],
+                    "measurement_count": row[1],
+                    "float_count": row[2],
+                    "lat_range": [float(row[3]), float(row[4])] if row[3] and row[4] else None,
+                    "lon_range": [float(row[5]), float(row[6])] if row[5] and row[6] else None
+                }
+                for row in geographic_analysis
+            ],
+            "parameter_coverage": {
+                "total_measurements": parameter_analysis[0],
+                "temperature_coverage": round((parameter_analysis[1] / max(parameter_analysis[0], 1)) * 100, 2),
+                "salinity_coverage": round((parameter_analysis[2] / max(parameter_analysis[0], 1)) * 100, 2),
+                "pressure_coverage": round((parameter_analysis[3] / max(parameter_analysis[0], 1)) * 100, 2),
+                "ranges": {
+                    "temperature": {
+                        "avg": round(float(parameter_analysis[4]), 3) if parameter_analysis[4] else None,
+                        "min": round(float(parameter_analysis[5]), 3) if parameter_analysis[5] else None,
+                        "max": round(float(parameter_analysis[6]), 3) if parameter_analysis[6] else None
+                    },
+                    "salinity": {
+                        "avg": round(float(parameter_analysis[7]), 3) if parameter_analysis[7] else None,
+                        "min": round(float(parameter_analysis[8]), 3) if parameter_analysis[8] else None,
+                        "max": round(float(parameter_analysis[9]), 3) if parameter_analysis[9] else None
+                    }
+                }
+            },
+            "temporal_distribution": [
+                {
+                    "month": row[0].isoformat() if row[0] else None,
+                    "measurement_count": row[1],
+                    "active_floats": row[2]
+                }
+                for row in temporal_analysis
+            ],
+            "rag_insights": {
+                "vector_embeddings_quality": "Enhanced analytics-aware embeddings with oceanographic context",
+                "search_capabilities": [
+                    "Semantic search with oceanographic understanding",
+                    "Depth-layer filtering (surface, thermocline, intermediate, deep, abyssal)",
+                    "Regional filtering (Arabian Sea, Equatorial Indian Ocean, etc.)",
+                    "Parameter-specific search (temperature, salinity, pressure)",
+                    "Seasonal and temporal analysis",
+                    "Water mass identification",
+                    "Anomaly detection (temperature/salinity anomalies)"
+                ],
+                "sample_vector_content": sample_documents
+            },
+            "data_quality_indicators": {
+                "completeness_score": round(((parameter_analysis[1] + parameter_analysis[2] + parameter_analysis[3]) / (parameter_analysis[0] * 3)) * 100, 2),
+                "geographic_coverage": len([row for row in geographic_analysis if row[1] > 0]),
+                "depth_coverage": len([row for row in depth_analysis if row[1] > 0]),
+                "vector_db_sync": round((vector_stats.get('total_measurements', 0) / max(total_measurements, 1)) * 100, 2)
+            }
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to analyze knowledge base: {str(e)}")
+
+@app.get("/admin/rag-balance-test")
+def test_rag_balance(db: Session = Depends(get_db)):
+    """Test RAG pipeline balance with sample queries to identify potential data capture issues"""
+    try:
+        # Test queries to evaluate RAG balance
+        test_queries = [
+            "What is the temperature profile in the Arabian Sea?",
+            "Show me salinity measurements from deep waters",  
+            "Compare temperature between surface and deep waters",
+            "What recent data do you have from Indian Ocean floats?",
+            "Analyze temperature trends over depth"
+        ]
+        
+        results = []
+        
+        for test_query in test_queries:
+            try:
+                # Quick context retrieval test
+                context_results = vector_store.search(test_query, n_results=15)
+                context_count = len(context_results.get('documents', [[]])[0]) if context_results.get('documents') else 0
+                
+                # Quick data retrieval test
+                sample_data = db.execute(text(
+                    "SELECT COUNT(*) as count FROM argo_measurements WHERE temperature IS NOT NULL AND salinity IS NOT NULL"
+                )).fetchone()
+                
+                results.append({
+                    "query": test_query,
+                    "vector_context_found": context_count,
+                    "available_data_points": sample_data[0] if sample_data else 0,
+                    "context_quality": "good" if context_count >= 8 else "limited" if context_count >= 3 else "poor"
+                })
+                
+            except Exception as query_error:
+                results.append({
+                    "query": test_query,
+                    "error": str(query_error),
+                    "status": "failed"
+                })
+        
+        # Overall assessment
+        avg_context = sum(r.get('vector_context_found', 0) for r in results) / len(results)
+        total_data = results[0].get('available_data_points', 0) if results else 0
+        
+        assessment = {
+            "overall_status": "good" if avg_context >= 8 else "needs_improvement" if avg_context >= 5 else "poor",
+            "average_context_retrieval": round(avg_context, 1),
+            "total_available_data": total_data,
+            "test_results": results,
+            "recommendations": []
+        }
+        
+        # Generate recommendations
+        if avg_context < 8:
+            assessment["recommendations"].append("Consider increasing vector search results limit")
+        if avg_context < 5:
+            assessment["recommendations"].append("Vector embeddings may need optimization")
+        if total_data < 1000:
+            assessment["recommendations"].append("More data may be needed for comprehensive analysis")
+        
+        return assessment
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to test RAG balance: {str(e)}")
 
 @app.get("/admin/files")
 def get_uploaded_files(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):

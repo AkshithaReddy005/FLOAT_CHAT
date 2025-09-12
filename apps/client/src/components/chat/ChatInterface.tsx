@@ -13,10 +13,25 @@ export interface Message {
   chatResponse?: ChatResponse;
 }
 
+interface APIContext {
+  recent_exchanges: Array<{
+    user_query: string;
+    ai_response_summary: string;
+    timestamp: string;
+  }>;
+  key_context: {
+    locations: string[];
+    time_ranges: string[];
+    data_types: string[];
+    recent_focus: string[];
+  };
+  conversation_summary: string;
+}
+
 interface ChatInterfaceProps {
   onResponse: (response: ChatResponse) => void;
   isLoading: boolean;
-  onSendMessage: (message: string, context?: any) => Promise<void>;
+  onSendMessage: (message: string, context?: APIContext) => Promise<void>;
 }
 
 export interface ChatInterfaceRef {
@@ -163,7 +178,7 @@ export const ChatInterface = React.forwardRef<ChatInterfaceRef, ChatInterfacePro
             </p>
             <div className="flex flex-wrap gap-2 justify-center max-w-2xl">
               {[
-                "What's the current temperature near Mumbai?",
+                "What's the current temperature in various depths of the Indian Ocean?",
                 "Show salinity trends in Arabian Sea",
                 "Find anomalies in Bay of Bengal data",
                 "Deep water analysis for research"

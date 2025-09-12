@@ -33,12 +33,34 @@ export interface ChatRequest {
   message: string;
 }
 
+export interface ChartRecommendation {
+  type: string;
+  chart_type: string;
+  reason: string;
+}
+
 export interface ChatResponse {
   response: string;
   data: ArgoMeasurement[];
   visualization: {
+    reasoning?: string;
+    chart_recommendations?: ChartRecommendation[];
+    available_visualizations?: string[];
     map?: {
       type: string;
+      recommended_type?: string;
+      reason?: string;
+      total_points?: number;
+      bounds?: {
+        north: number;
+        south: number;
+        east: number;
+        west: number;
+        center: {
+          lat: number;
+          lon: number;
+        };
+      };
       points: Array<{
         lat: number;
         lon: number;
@@ -51,31 +73,124 @@ export interface ChatResponse {
     };
     depth_profile?: {
       type: string;
+      depth_range?: {
+        min: number;
+        max: number;
+      };
       data: Array<{
         depth: number;
-        temperature: number;
-        salinity: number;
-        float_id: string;
+        count: number;
+        temperature: {
+          avg: number | null;
+          min: number | null;
+          max: number | null;
+        };
+        salinity: {
+          avg: number | null;
+          min: number | null;
+          max: number | null;
+        };
+        pressure: {
+          avg: number | null;
+          min: number | null;
+          max: number | null;
+        };
       }>;
     };
     time_series?: {
       type: string;
       data: Array<{
         date: string;
-        temperature: number;
-        salinity: number;
-        float_id: string;
+        measurements_count: number;
+        temperature_avg: number | null;
+        salinity_avg: number | null;
+        floats: string[];
       }>;
+      date_range?: {
+        start: string | null;
+        end: string | null;
+      };
+    };
+    statistics?: {
+      type: string;
+      parameters: {
+        temperature?: {
+          count: number;
+          min: number;
+          max: number;
+          mean: number;
+          median: number;
+          std_dev?: number;
+          variance?: number;
+        };
+        salinity?: {
+          count: number;
+          min: number;
+          max: number;
+          mean: number;
+          median: number;
+          std_dev?: number;
+          variance?: number;
+        };
+        depth?: {
+          count: number;
+          min: number;
+          max: number;
+          mean: number;
+          median: number;
+          std_dev?: number;
+          variance?: number;
+        };
+      };
+      correlations?: {
+        temp_depth?: number;
+        sal_depth?: number;
+      };
     };
     summary?: {
       total_measurements: number;
       unique_floats: number;
+      temperature?: {
+        count: number;
+        min: number;
+        max: number;
+        mean: number;
+        median: number;
+      };
+      salinity?: {
+        count: number;
+        min: number;
+        max: number;
+        mean: number;
+        median: number;
+      };
+      depth?: {
+        count: number;
+        min: number;
+        max: number;
+        mean: number;
+        median: number;
+      };
       date_range?: {
         start: string;
         end: string;
+        span_days: number;
       };
     };
+    custom_chart?: {
+      type: string;
+      config: Record<string, unknown>;
+      data: Record<string, unknown>[];
+      title?: string;
+      description?: string;
+    };
+    chart_request_info?: {
+      requested_chart_type?: string;
+      explanation?: string;
+      reason?: string;
+    };
     type?: string;
+    message?: string;
   };
   query_params: {
     location?: {
@@ -89,6 +204,7 @@ export interface ChatResponse {
     limit: number;
   };
   context_count: number;
+  response_summary?: string;
 }
 
 export type UserType = 'admin' | 'researcher' | null;

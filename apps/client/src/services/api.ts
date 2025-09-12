@@ -97,6 +97,18 @@ class ApiService {
       method: 'GET',
     });
   }
+
+  async getKnowledgeBaseDetails(): Promise<any> {
+    return this.makeRequest<any>('/admin/knowledge-base', {
+      method: 'GET',
+    });
+  }
+
+  async testRAGBalance(): Promise<any> {
+    return this.makeRequest<any>('/admin/rag-balance-test', {
+      method: 'GET',
+    });
+  }
 }
 
 export const apiService = new ApiService();

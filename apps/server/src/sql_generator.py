@@ -22,7 +22,7 @@ load_dotenv()
 class SQLGenerator:
     def __init__(self):
         self.gemini_api_key = os.getenv("GEMINI_API_KEY")
-        self.gemini_model = "gemini-2.0-flash"
+        self.gemini_model = os.getenv("GEMINI_SQL_MODEL", "gemini-2.0-flash")
         
         # Initialize Gemini if available
         if GEMINI_AVAILABLE and self.gemini_api_key:
@@ -39,17 +39,17 @@ class SQLGenerator:
             print("SQL Generator: Using rule-based approach only")
     
     async def generate_sql(self, user_query: str, query_classification: Dict, 
-                          context_results: Dict = None) -> Optional[str]:
+                          context_results: Dict = None, session_context: dict = None) -> Optional[str]:
         """Generate SQL query based on user input and classification"""
         
         if self.use_gemini and query_classification.get("is_complex", False):
             # Use LLM for complex queries
-            return await self._generate_with_gemini(user_query, context_results)
+            return await self._generate_with_gemini(user_query, context_results, session_context)
         else:
             # Use rule-based approach for simple queries
-            return self._generate_rule_based(user_query, query_classification)
+            return self._generate_rule_based(user_query, query_classification, session_context)
     
-    async def _generate_with_gemini(self, user_query: str, context_results: Dict = None) -> Optional[str]:
+    async def _generate_with_gemini(self, user_query: str, context_results: Dict = None, session_context: dict = None) -> Optional[str]:
         """Generate SQL using Gemini LLM"""
         
         # Extract context information if available
@@ -58,6 +58,20 @@ class SQLGenerator:
             context_docs = context_results.get('documents', [[]])[0][:2]
             if context_docs:
                 context_summary = f"Context from database: {'; '.join(context_docs)}"
+        
+        # Add session context for better query continuity
+        session_summary = ""
+        if session_context:
+            locations = session_context.get('key_context', {}).get('locations', [])
+            data_types = session_context.get('key_context', {}).get('data_types', [])
+            recent_focus = session_context.get('key_context', {}).get('recent_focus', [])
+            
+            if locations:
+                session_summary += f"Previously discussed locations: {', '.join(locations[-3:])}\n"
+            if data_types:
+                session_summary += f"Data types of interest: {', '.join(data_types[-3:])}\n"
+            if recent_focus:
+                session_summary += f"Recent queries: {'; '.join(recent_focus[-2:])}\n"
         
         instruction = f"""You are an expert in ARGO oceanographic data analysis. Generate a PostgreSQL query for the user's question.
 
@@ -85,6 +99,13 @@ Rules:
 - Handle NULL values explicitly in aggregations
 
 {context_summary}
+
+{session_summary}
+
+IMPORTANT for Session Context:
+- If user asks "what about below 1000m" or similar relative queries, consider previous location context
+- Use session context to infer missing parameters (location, depth ranges, data types)
+- For queries like "below X meters", combine with previous location context
 
 Advanced Examples:
 - "Average temperature difference between areas": 
@@ -116,24 +137,62 @@ Generate ONLY the SQL query (no explanation or markdown):"""
                     max_output_tokens=300
                 )
             )
-            sql = response.text.strip()
-            # Clean up any markdown formatting
-            sql = sql.replace('```sql', '').replace('```', '').strip()
-            return sql
+            
+            # Enhanced response validation and safety handling
+            if response:
+                # Check if response was blocked or filtered
+                if hasattr(response, 'candidates') and response.candidates:
+                    candidate = response.candidates[0]
+                    if hasattr(candidate, 'finish_reason'):
+                        finish_reason = candidate.finish_reason
+                        if finish_reason in [2, 3, 4]:  # SAFETY, RECITATION, OTHER
+                            print(f"SQL Generator: Response blocked (reason: {finish_reason}), using rule-based approach")
+                            return None
+                
+                # Try to get text, handle various response structures
+                response_text = None
+                try:
+                    if hasattr(response, 'text') and response.text:
+                        response_text = response.text
+                    elif hasattr(response, 'candidates') and response.candidates:
+                        # Try to get text from first candidate
+                        candidate = response.candidates[0]
+                        if hasattr(candidate, 'content') and candidate.content:
+                            if hasattr(candidate.content, 'parts') and candidate.content.parts:
+                                for part in candidate.content.parts:
+                                    if hasattr(part, 'text') and part.text:
+                                        response_text = part.text
+                                        break
+                except Exception as text_extract_error:
+                    print(f"SQL Generator: Error extracting text from response: {text_extract_error}")
+                
+                # Validate and clean extracted text
+                if response_text and len(response_text.strip()) > 5:
+                    sql = response_text.strip()
+                    # Clean up any markdown formatting
+                    sql = sql.replace('```sql', '').replace('```', '').strip()
+                    return sql
+                else:
+                    print("SQL Generator: Gemini returned empty or very short response")
+                    return None
+            else:
+                print("SQL Generator: No response from Gemini")
+                return None
+                
         except Exception as e:
             print(f"Failed to generate SQL with Gemini: {e}")
             return None
     
-    def _generate_rule_based(self, user_query: str, query_classification: Dict) -> Optional[str]:
+    def _generate_rule_based(self, user_query: str, query_classification: Dict, session_context: dict = None) -> Optional[str]:
         """Generate SQL using rule-based approach"""
         query_lower = user_query.lower()
         
         # Check for comparative queries first
         if self._is_comparative_query(query_lower):
-            return self._generate_comparative_query(query_lower, query_classification)
+            return self._generate_comparative_query(query_lower, query_classification, session_context)
         
-        # Extract parameters
-        params = self._extract_parameters(query_lower)
+        # Extract parameters with session context support
+        params = self._extract_parameters(query_lower, session_context)
         
         # Build SQL components
         select_clause = "SELECT float_id, latitude, longitude, date, depth, temperature, salinity, pressure"
@@ -156,10 +215,15 @@ Generate ONLY the SQL query (no explanation or markdown):"""
             where_conditions.append(f"date >= '{start_date.isoformat()}'")
             where_conditions.append(f"date <= '{end_date.isoformat()}'")
         
-        # Add depth filter
+        # Add depth filter with enhanced operators
         if params.get("depth_range"):
-            depth_start, depth_end = params["depth_range"]
-            where_conditions.append(f"depth BETWEEN {depth_start} AND {depth_end}")
+            depth_range = params["depth_range"]
+            if isinstance(depth_range[0], str):  # Operator-based depth filtering
+                operator, depth_value = depth_range
+                where_conditions.append(f"depth {operator} {depth_value}")
+            else:  # Range-based depth filtering
+                depth_start, depth_end = depth_range
+                where_conditions.append(f"depth BETWEEN {depth_start} AND {depth_end}")
         
         # Add parameter filter (temperature, salinity, etc.)
         if params.get("parameter"):
@@ -198,28 +262,48 @@ Generate ONLY the SQL query (no explanation or markdown):"""
             else:
                 sql += " ORDER BY date DESC"
         
-        # Add LIMIT
-        limit = 1000 if query_classification.get("is_complex") else 500
+        # Add LIMIT - increased for better data coverage
+        limit = 1500 if query_classification.get("is_complex") else 800
         sql += f" LIMIT {limit}"
         
         return sql
     
-    def _extract_parameters(self, query_lower: str) -> Dict:
-        """Extract parameters from query text"""
+    def _extract_parameters(self, query_lower: str, session_context: dict = None) -> Dict:
+        """Extract parameters from query text with session context support"""
         params = {}
         
         # Extract location
         location_patterns = [
+            r"mumbai",
+            r"bombay", 
             r"near\s+([a-zA-Z\s]+?)(?:\s|$)",
             r"in\s+([a-zA-Z\s]+?)(?:\s|$)",
             r"around\s+([a-zA-Z\s]+?)(?:\s|$)"
         ]
         
+        location_found = False
         for pattern in location_patterns:
             match = re.search(pattern, query_lower)
             if match:
-                params["location"] = match.group(1).strip()
+                if pattern in ["mumbai", "bombay"]:
+                    params["location"] = "mumbai"
+                else:
+                    params["location"] = match.group(1).strip()
+                location_found = True
                 break
+        
+        # If no explicit location found, use session context for relative queries
+        if not location_found and session_context:
+            relative_indicators = ["below", "above", "deeper", "shallower", "there", "that area", "same area"]
+            if any(indicator in query_lower for indicator in relative_indicators):
+                recent_locations = session_context.get('key_context', {}).get('locations', [])
+                if recent_locations:
+                    # Use the most recent location from session
+                    for location in reversed(recent_locations):
+                        if location.lower() in ["mumbai", "bombay", "arabian sea", "indian ocean"]:
+                            params["location"] = location.lower()
+                            print(f"Using session context location: {params['location']} for query: {query_lower}")
+                            break
         
         # Extract date information
         if "march" in query_lower and "2023" in query_lower:
@@ -227,11 +311,32 @@ Generate ONLY the SQL query (no explanation or markdown):"""
         elif "2023" in query_lower:
             params["date_range"] = (datetime(2023, 1, 1), datetime(2024, 1, 1))
         
-        # Extract depth
-        depth_match = re.search(r"depth\s*(\d+)", query_lower)
-        if depth_match:
-            depth = float(depth_match.group(1))
-            params["depth_range"] = (depth - 25, depth + 25)
+        # Extract depth with better pattern matching
+        depth_patterns = [
+            r"below\s*(\d+)\s*m",      # "below 1000m"
+            r"above\s*(\d+)\s*m",      # "above 500m" 
+            r"deeper\s*than\s*(\d+)",  # "deeper than 1000"
+            r"shallower\s*than\s*(\d+)", # "shallower than 500"
+            r"depth\s*(\d+)",          # "depth 1000"
+            r"(\d+)\s*m.*deep",        # "1000m deep"
+            r"at\s*(\d+)\s*m"          # "at 1000m"
+        ]
+        
+        for i, pattern in enumerate(depth_patterns):
+            match = re.search(pattern, query_lower)
+            if match:
+                depth = float(match.group(1))
+                if i == 0:  # below X meters
+                    params["depth_range"] = (">=", depth)
+                elif i == 1:  # above X meters  
+                    params["depth_range"] = ("<=", depth)
+                elif i == 2:  # deeper than X
+                    params["depth_range"] = (">=", depth)
+                elif i == 3:  # shallower than X
+                    params["depth_range"] = ("<=", depth)
+                else:  # specific depth or range
+                    params["depth_range"] = (depth - 50, depth + 50)
+                break
         
         # Extract parameter type
         if "temperature" in query_lower:
@@ -269,7 +374,7 @@ Generate ONLY the SQL query (no explanation or markdown):"""
         ]
         return any(pattern in query_lower for pattern in comparison_patterns)
     
-    def _generate_comparative_query(self, query_lower: str, query_classification: Dict) -> Optional[str]:
+    def _generate_comparative_query(self, query_lower: str, query_classification: Dict = None, session_context: dict = None) -> Optional[str]:
         """Generate SQL for comparative analysis between areas/conditions"""
         
         # Extract comparison type
@@ -407,8 +512,6 @@ Generate ONLY the SQL query (no explanation or markdown):"""
         if any(keyword in sql_clean for keyword in forbidden):
             return False
         
-        # Allow sophisticated SQL patterns
-        allowed_advanced = ["with", "cte", "case when", "percentile_cont", "corr", "stddev", "over()", "within group"]
         
         # Must have LIMIT (unless it's a CTE with aggregation only)
         if "limit" not in sql_clean:

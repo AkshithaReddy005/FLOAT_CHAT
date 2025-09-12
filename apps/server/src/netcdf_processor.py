@@ -115,12 +115,19 @@ class NetCDFProcessor:
                         temperature = float(temp_array[i]) if not pd.isna(temp_array[i]) else None  
                         salinity = float(sal_array[i]) if not pd.isna(sal_array[i]) else None
                         
-                        # Validate data
-                        if (pressure is None or temperature is None or salinity is None or
-                            pressure < 0 or pressure > 10000 or
-                            temperature < -5 or temperature > 40 or
-                            salinity < 0 or salinity > 50):
+                        # More lenient validation - keep more data for analysis
+                        if (pressure is None or pressure < 0 or pressure > 12000):
                             continue
+                        # Allow missing temperature or salinity but flag them
+                        if temperature is not None and (temperature < -5 or temperature > 45):
+                            continue
+                        if salinity is not None and (salinity < 0 or salinity > 50):
+                            continue
+                        # Convert None to a reasonable default or keep None for analysis
+                        if temperature is None:
+                            temperature = 0.0  # Flag value for missing data
+                        if salinity is None:
+                            salinity = 0.0  # Flag value for missing data
                         
                         measurement = {
                             'float_id': f"FLOAT_000001",
@@ -156,12 +163,19 @@ class NetCDFProcessor:
                             temperature = float(temp_array[prof, level]) if not pd.isna(temp_array[prof, level]) else None
                             salinity = float(sal_array[prof, level]) if not pd.isna(sal_array[prof, level]) else None
                             
-                            # Validate data
-                            if (pressure is None or temperature is None or salinity is None or
-                                pressure < 0 or pressure > 10000 or
-                                temperature < -5 or temperature > 40 or
-                                salinity < 0 or salinity > 50):
+                            # More lenient validation - keep more data for analysis
+                            if (pressure is None or pressure < 0 or pressure > 12000):
                                 continue
+                            # Allow missing temperature or salinity but flag them
+                            if temperature is not None and (temperature < -5 or temperature > 45):
+                                continue
+                            if salinity is not None and (salinity < 0 or salinity > 50):
+                                continue
+                            # Convert None to a reasonable default or keep None for analysis
+                            if temperature is None:
+                                temperature = 0.0  # Flag value for missing data
+                            if salinity is None:
+                                salinity = 0.0  # Flag value for missing data
                             
                             measurement = {
                                 'float_id': f"FLOAT_{prof:06d}",
