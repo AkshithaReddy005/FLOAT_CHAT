@@ -39,9 +39,68 @@ export interface ChartRecommendation {
   reason: string;
 }
 
+export interface PipelineFlow {
+  total_duration: string;
+  steps: Array<{
+    step: string;
+    duration: string;
+    status: string;
+    details: string;
+  }>;
+  parameter_extraction?: {
+    duration: string;
+    input_query: string;
+    extracted_location: string;
+    extracted_parameters: string[];
+    extracted_years: number[];
+    confidence_score: number;
+    complexity_level: string;
+    is_chart_request: boolean;
+    summary: string;
+  };
+  sql_generation?: {
+    generation_duration: string;
+    execution_duration: string;
+    total_duration: string;
+    generated_query: string;
+    sql_filters: Record<string, any>;
+    records_returned: number;
+    sample_results: Record<string, any>[];
+  };
+  chroma_search?: {
+    duration: string;
+    search_filters: Record<string, any>;
+    documents_found: number;
+    n_results_requested: number;
+    sample_documents: string[];
+    distances: number[];
+  };
+  api_response?: {
+    duration: string;
+    response_type: string;
+    data_points: number;
+    context_documents_used: number;
+    visualization_requested: boolean;
+    ai_summary: string;
+  };
+  consistency_validation?: {
+    duration: string;
+    is_consistent: boolean;
+    violations_count: number;
+    violations: string[];
+    consistency_score: number;
+    detailed_report: {
+      parameter_drift: Record<string, any>;
+      data_quality_issues: Record<string, any>;
+      service_inconsistencies: Record<string, any>;
+    };
+  };
+}
+
 export interface ChatResponse {
   response: string;
   data: ArgoMeasurement[];
+  pipeline_flow?: PipelineFlow;
   visualization: {
     reasoning?: string;
     chart_recommendations?: ChartRecommendation[];

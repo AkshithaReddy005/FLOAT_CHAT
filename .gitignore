@@ -98,4 +98,4 @@ chroma_db/
 .chroma/
 chroma_data/
 **/chroma_data/
-apps/server/src/chroma_data/
+apps/server/src/chroma_data/test_server/

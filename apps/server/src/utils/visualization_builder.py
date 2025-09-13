@@ -621,6 +621,8 @@ class VisualizationBuilder:
         """Build map visualization data"""
         points = []
         
+        print(f"DEBUG: _build_map_data called with {len(db_results)} results")
+        
         for r in db_results:
             if r.get('latitude') is not None and r.get('longitude') is not None:
                 try:
@@ -635,20 +637,18 @@ class VisualizationBuilder:
                     if lat == 0.0 and lon == 0.0:
                         continue
                         
-                    # Skip fake float IDs
+                    # Include all valid ARGO float IDs (FLOAT_XXXXXX format is valid)
                     float_id = r.get('float_id', '')
-                    if (not float_id or 
-                        float_id.startswith('float_') or 
-                        float_id.startswith('FLOAT_00000')):
+                    if not float_id:
                         continue
                     
-                    # Only include points with at least some real measurement data (not zero)
-                    has_real_measurements = any([
-                        r.get('temperature') is not None and r.get('temperature') != 0,
-                        r.get('salinity') is not None and r.get('salinity') != 0,
-                        r.get('pressure') is not None and r.get('pressure') != 0
+                    # Only include points with at least some measurement data
+                    has_measurements = any([
+                        r.get('temperature') is not None,
+                        r.get('salinity') is not None,
+                        r.get('pressure') is not None
                     ])
-                    if not has_real_measurements:
+                    if not has_measurements:
                         continue
                     
                     point = {
@@ -705,20 +705,18 @@ class VisualizationBuilder:
                     if depth < 0 or depth > 11000 or depth == 0:  
                         continue
                     
-                    # Skip fake float IDs
+                    # Include all valid ARGO float IDs
                     float_id = r.get('float_id', '')
-                    if (not float_id or 
-                        float_id.startswith('float_') or 
-                        float_id.startswith('FLOAT_00000')):
+                    if not float_id:
                         continue
                     
-                    # Only include if we have actual measurement data (not zero)
-                    has_real_measurements = any([
-                        r.get('temperature') is not None and r.get('temperature') != 0,
-                        r.get('salinity') is not None and r.get('salinity') != 0,
-                        r.get('pressure') is not None and r.get('pressure') != 0
+                    # Only include if we have measurement data
+                    has_measurements = any([
+                        r.get('temperature') is not None,
+                        r.get('salinity') is not None,
+                        r.get('pressure') is not None
                     ])
-                    if not has_real_measurements:
+                    if not has_measurements:
                         continue
                     
                     # Round depth to nearest 10m for grouping

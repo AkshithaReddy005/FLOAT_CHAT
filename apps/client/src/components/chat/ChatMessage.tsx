@@ -1,6 +1,7 @@
 import React from 'react';
 import { formatChatMessage } from '../../utils/formatChatMessage';
 import { VisualizationCard } from './VisualizationCard';
+import { PipelineFlowVisualization } from './PipelineFlowVisualization';
 import type { ChatResponse, ArgoMeasurement } from '../../types';
 
 export interface ChatMessageProps {
@@ -81,7 +82,20 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
 
           {/* Visualization Card for AI messages with data */}
           {!isUser && !isTyping && chatResponse && (
-            <VisualizationCard chatResponse={chatResponse} results={results} />
+            <>
+              <VisualizationCard chatResponse={chatResponse} results={results} />
+              {/* Pipeline Flow Visualization - Debug */}
+              {console.log('ChatResponse:', chatResponse)}
+              {console.log('Pipeline Flow:', chatResponse.pipeline_flow)}
+              {chatResponse.pipeline_flow ? (
+                <div className="mt-4 p-4 bg-gray-50 border rounded-lg">
+                  <h3 className="text-sm font-semibold text-gray-700 mb-2">🔄 Pipeline Execution Flow</h3>
+                  <PipelineFlowVisualization pipelineFlow={chatResponse.pipeline_flow} />
+                </div>
+              ) : (
+                <div className="mt-2 text-xs text-gray-500">No pipeline flow data available</div>
+              )}
+            </>
           )}
         </div>
       </div>

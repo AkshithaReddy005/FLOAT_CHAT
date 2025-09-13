@@ -523,9 +523,33 @@ class VectorStore:
         full_hash = hashlib.sha256(key_string.encode()).hexdigest()
         return full_hash[:32]
     
-    def search(self, query: str, n_results: int = 10):
+    def search(self, query: str, n_results: int = 10, filters: Dict = None) -> Dict:
+        """Search with optional metadata filters (legacy method)"""
+        return self._search_internal(query, n_results, filters)
+    
+    def search_with_context(self, parameter_context, n_results: int = 10) -> Dict:
+        """Search using unified parameter context for consistent filtering"""
+        
+        # Convert parameter context to ChromaDB filters
+        chroma_filters = parameter_context.to_chroma_filters()
+        
+        # Use the original query for semantic search
+        query_text = parameter_context.original_query
+        
+        return self._search_internal(query_text, n_results, chroma_filters)
+    
+    def _search_internal(self, query: str, n_results: int = 10, filters: Dict = None) -> Dict:
         """Enhanced search with analytics-aware filtering"""
         try:
+            # If we have specific filters (from parameter context), use them directly
+            if filters:
+                results = self.collection.query(
+                    query_texts=[query],
+                    n_results=n_results,
+                    where=filters
+                )
+                return results
+            
             # First, try enhanced search with filtering
             enhanced_results = self.enhanced_search(query, n_results)
             if enhanced_results['documents'][0]:  # If we got results

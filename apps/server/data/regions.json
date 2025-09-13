@@ -1,0 +1,74 @@
+{
+  "regions": {
+    "arabian sea": {
+      "lat_min": 10,
+      "lat_max": 25,
+      "lon_min": 65,
+      "lon_max": 75,
+      "aliases": ["arabian", "arab sea"]
+    },
+    "indian ocean": {
+      "lat_min": -40,
+      "lat_max": 30,
+      "lon_min": 20,
+      "lon_max": 120,
+      "aliases": ["indian", "indo pacific"]
+    },
+    "mumbai": {
+      "lat_min": 18,
+      "lat_max": 20,
+      "lon_min": 72,
+      "lon_max": 74,
+      "aliases": ["bombay"]
+    },
+    "northern arabian sea": {
+      "lat_min": 20,
+      "lat_max": 25,
+      "lon_min": 65,
+      "lon_max": 75,
+      "aliases": ["north arabian", "northern arab sea"]
+    },
+    "southern arabian sea": {
+      "lat_min": 10,
+      "lat_max": 20,
+      "lon_min": 65,
+      "lon_max": 75,
+      "aliases": ["south arabian", "southern arab sea"]
+    },
+    "bay of bengal": {
+      "lat_min": 5,
+      "lat_max": 22,
+      "lon_min": 80,
+      "lon_max": 100,
+      "aliases": ["bengal bay", "boi", "bengal"]
+    },
+    "coastal": {
+      "lat_min": 18,
+      "lat_max": 22,
+      "lon_min": 70,
+      "lon_max": 74,
+      "aliases": ["coast", "nearshore"]
+    },
+    "offshore": {
+      "lat_min": 15,
+      "lat_max": 25,
+      "lon_min": 65,
+      "lon_max": 72,
+      "aliases": ["open ocean", "deep water"]
+    },
+    "antarctica": {
+      "lat_min": -90,
+      "lat_max": -60,
+      "lon_min": -180,
+      "lon_max": 180,
+      "aliases": ["antarctic", "south pole", "southern ocean"]
+    },
+    "southern ocean": {
+      "lat_min": -70,
+      "lat_max": -40,
+      "lon_min": -180,
+      "lon_max": 180,
+      "aliases": ["antarctic ocean", "austral ocean"]
+    }
+  }
+}
