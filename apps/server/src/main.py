@@ -74,6 +74,7 @@ class ChatResponse(BaseModel):
     response: str
     data: List[ArgoMeasurementDict]
     visualization: dict
+    pipeline_flow: Optional[dict] = None
     query_params: dict
     context_count: int
 
@@ -561,6 +562,7 @@ async def chat_with_data(request: ChatRequest, db: Session = Depends(get_db)):
             response=result["response"],
             data=data_dicts,
             visualization=result["visualization"],
+            pipeline_flow=result.get("pipeline_flow"),
             query_params=result["query_params"],
             context_count=result["context_count"]
         )

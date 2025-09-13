@@ -49,6 +49,53 @@ class SQLGenerator:
             # Use rule-based approach for simple queries
             return self._generate_rule_based(user_query, query_classification, session_context)
     
+    async def generate_sql_from_context(self, parameter_context) -> Optional[str]:
+        """Generate SQL query from unified parameter context (NEW UNIFIED METHOD)"""
+        
+        # Always use rule-based generation for comparative queries to ensure
+        # deterministic region-wise aggregation SQL is produced.
+        if getattr(parameter_context, "is_comparative", False):
+            return self._generate_rule_based_from_context(parameter_context)
+        
+        if self.use_gemini and parameter_context.complexity_level == "complex":
+            # Use LLM for complex queries (non-comparative)
+            return await self._generate_with_gemini_from_context(parameter_context)
+        else:
+            # Use rule-based approach for simple queries
+            return self._generate_rule_based_from_context(parameter_context)
+    
+    async def _generate_with_gemini_from_context(self, parameter_context) -> Optional[str]:
+        """Generate SQL using Gemini LLM from parameter context"""
+        
+        # Build prompt from parameter context
+        context_summary = f"Parameters: {parameter_context.get_summary()}"
+        
+        instruction = f"""Generate PostgreSQL query for ARGO oceanographic data.
+
+Database: argo_measurements (float_id, latitude, longitude, date, depth, temperature, salinity, pressure)
+
+Query: {parameter_context.original_query}
+{context_summary}
+
+Generate ONLY the SQL query:"""
+
+        try:
+            response = self.model.generate_content(
+                instruction,
+                generation_config=genai.GenerationConfig(
+                    temperature=0.1,
+                    max_output_tokens=300
+                )
+            )
+            
+            if response and hasattr(response, 'text') and response.text:
+                sql = response.text.strip().replace('```sql', '').replace('```', '').strip()
+                return sql
+            return None
+        except Exception as e:
+            print(f"Gemini SQL generation failed: {e}")
+            return None
+    
     async def _generate_with_gemini(self, user_query: str, context_results: Dict = None, session_context: dict = None) -> Optional[str]:
         """Generate SQL using Gemini LLM"""
         
@@ -182,6 +229,133 @@ Generate ONLY the SQL query (no explanation or markdown):"""
         except Exception as e:
             print(f"Failed to generate SQL with Gemini: {e}")
             return None
+    
+    def _generate_rule_based_from_context(self, parameter_context) -> Optional[str]:
+        """Generate SQL using rule-based approach from parameter context"""
+        
+        # Build SQL components from parameter context
+        select_clause = "SELECT float_id, latitude, longitude, date, depth, temperature, salinity, pressure"
+        where_conditions = []
+        
+        # Location filter
+        if parameter_context.location_bounds:
+            bounds = parameter_context.location_bounds
+            where_conditions.append(f"latitude BETWEEN {bounds['lat_min']} AND {bounds['lat_max']}")
+            where_conditions.append(f"longitude BETWEEN {bounds['lon_min']} AND {bounds['lon_max']}")
+        
+        # Temporal filter
+        if parameter_context.date_years:
+            # Year comparison logic
+            year_conditions = [f"(date >= '{year}-01-01' AND date <= '{year}-12-31')" for year in parameter_context.date_years]
+            where_conditions.append(f"({' OR '.join(year_conditions)})")
+        elif parameter_context.date_range:
+            start_date, end_date = parameter_context.date_range
+            where_conditions.append(f"date >= '{start_date.isoformat()}'")
+            where_conditions.append(f"date <= '{end_date.isoformat()}'")
+        
+        # Depth filter
+        if parameter_context.depth_range:
+            if parameter_context.depth_type == 'operator':
+                operator, value = parameter_context.depth_range
+                where_conditions.append(f"depth {operator} {value}")
+            else:
+                min_depth, max_depth = parameter_context.depth_range
+                where_conditions.append(f"depth BETWEEN {min_depth} AND {max_depth}")
+        
+        # Parameter filter
+        if parameter_context.parameters:
+            for param in parameter_context.parameters:
+                where_conditions.append(f"{param} IS NOT NULL")
+        
+        # Float ID filter
+        if parameter_context.float_ids:
+            float_list = "', '".join(parameter_context.float_ids)
+            where_conditions.append(f"float_id IN ('{float_list}')")
+        
+        # Build final query
+        sql = select_clause + " FROM argo_measurements"
+        if where_conditions:
+            sql += " WHERE " + " AND ".join(where_conditions)
+        
+        # Handle analytical queries
+        if parameter_context.is_analytical:
+            if parameter_context.parameters:
+                # Special case: correlation between temperature and salinity
+                oq = (parameter_context.original_query or "").lower()
+                has_temp = 'temperature' in parameter_context.parameters
+                has_sal = 'salinity' in parameter_context.parameters
+                if 'correlation' in oq and has_temp and has_sal:
+                    # Build WHERE with existing conditions plus non-null checks
+                    where_clauses = list(where_conditions) if where_conditions else []
+                    where_clauses.append("temperature IS NOT NULL")
+                    where_clauses.append("salinity IS NOT NULL")
+                    sql = "SELECT corr(temperature, salinity) AS corr_temp_sal, COUNT(*) AS count FROM argo_measurements"
+                    if where_clauses:
+                        sql += " WHERE " + " AND ".join(where_clauses)
+                    return sql
+                
+                param = parameter_context.parameters[0]
+                
+                # Handle comparative queries with regional breakdown
+                if parameter_context.is_comparative and parameter_context.coordinate_precision == "comparative":
+                    # Extract the two locations from location_name
+                    locations = parameter_context.location_name.split("_vs_")
+                    if len(locations) == 2:
+                        loc1_bounds = self._get_location_bounds_from_name(locations[0])
+                        loc2_bounds = self._get_location_bounds_from_name(locations[1])
+                        
+                        if loc1_bounds and loc2_bounds:
+                            sql = f"""
+                            SELECT 
+                                CASE 
+                                    WHEN latitude BETWEEN {loc1_bounds['lat_min']} AND {loc1_bounds['lat_max']} 
+                                         AND longitude BETWEEN {loc1_bounds['lon_min']} AND {loc1_bounds['lon_max']} 
+                                    THEN '{locations[0].replace('_', ' ').title()}'
+                                    WHEN latitude BETWEEN {loc2_bounds['lat_min']} AND {loc2_bounds['lat_max']} 
+                                         AND longitude BETWEEN {loc2_bounds['lon_min']} AND {loc2_bounds['lon_max']} 
+                                    THEN '{locations[1].replace('_', ' ').title()}'
+                                    ELSE 'Other'
+                                END as region,
+                                AVG({param}) as avg_{param}, 
+                                MIN({param}) as min_{param}, 
+                                MAX({param}) as max_{param}, 
+                                STDDEV({param}) as stddev_{param}, 
+                                COUNT(*) as count 
+                            FROM argo_measurements 
+                            WHERE {param} IS NOT NULL
+                            GROUP BY region
+                            HAVING region != 'Other'
+                            ORDER BY region
+                            """
+                            return sql.strip()
+                
+                # Regular analytical query
+                sql = f"SELECT AVG({param}) as avg_{param}, MIN({param}) as min_{param}, MAX({param}) as max_{param}, STDDEV({param}) as stddev_{param}, COUNT(*) as count FROM argo_measurements"
+                if where_conditions:
+                    sql += " WHERE " + " AND ".join(where_conditions)
+                # No ORDER BY or LIMIT for aggregation queries
+                return sql
+        
+        # Add ORDER BY and LIMIT for non-analytical queries
+        sql += " ORDER BY date DESC"
+        limit = 1500 if parameter_context.complexity_level == "complex" else 800
+        sql += f" LIMIT {limit}"
+        
+        return sql
+    
+    def _get_location_bounds_from_name(self, location_name: str) -> Optional[Dict]:
+        """Get location bounds from location name"""
+        location_bounds = {
+            "mumbai": {"lat_min": 18, "lat_max": 20, "lon_min": 72, "lon_max": 74},
+            "bombay": {"lat_min": 18, "lat_max": 20, "lon_min": 72, "lon_max": 74},
+            "arabian sea": {"lat_min": 10, "lat_max": 25, "lon_min": 65, "lon_max": 75},
+            "indian ocean": {"lat_min": -40, "lat_max": 30, "lon_min": 20, "lon_max": 120},
+            "northern arabian sea": {"lat_min": 20, "lat_max": 25, "lon_min": 65, "lon_max": 75},
+            "southern arabian sea": {"lat_min": 10, "lat_max": 20, "lon_min": 65, "lon_max": 75},
+            "coastal": {"lat_min": 18, "lat_max": 22, "lon_min": 70, "lon_max": 74},
+            "offshore": {"lat_min": 15, "lat_max": 25, "lon_min": 65, "lon_max": 72}
+        }
+        return location_bounds.get(location_name.lower().strip())
     
     def _generate_rule_based(self, user_query: str, query_classification: Dict, session_context: dict = None) -> Optional[str]:
         """Generate SQL using rule-based approach"""
@@ -317,6 +491,8 @@ Generate ONLY the SQL query (no explanation or markdown):"""
             r"above\s*(\d+)\s*m",      # "above 500m" 
             r"deeper\s*than\s*(\d+)",  # "deeper than 1000"
             r"shallower\s*than\s*(\d+)", # "shallower than 500"
+            r"greater\s*than\s*(\d+)\s*m", # "greater than 200m"
+            r"depth.*greater.*than.*(\d+)", # "depth greater than 200m"
             r"depth\s*(\d+)",          # "depth 1000"
             r"(\d+)\s*m.*deep",        # "1000m deep"
             r"at\s*(\d+)\s*m"          # "at 1000m"
@@ -326,14 +502,18 @@ Generate ONLY the SQL query (no explanation or markdown):"""
             match = re.search(pattern, query_lower)
             if match:
                 depth = float(match.group(1))
-                if i == 0:  # below X meters
-                    params["depth_range"] = (">=", depth)
-                elif i == 1:  # above X meters  
+                if i == 0:  # below X meters (shallower)
                     params["depth_range"] = ("<=", depth)
+                elif i == 1:  # above X meters (deeper)
+                    params["depth_range"] = (">=", depth)
                 elif i == 2:  # deeper than X
                     params["depth_range"] = (">=", depth)
                 elif i == 3:  # shallower than X
                     params["depth_range"] = ("<=", depth)
+                elif i == 4:  # greater than X meters
+                    params["depth_range"] = (">=", depth)
+                elif i == 5:  # depth greater than X
+                    params["depth_range"] = (">=", depth)
                 else:  # specific depth or range
                     params["depth_range"] = (depth - 50, depth + 50)
                 break

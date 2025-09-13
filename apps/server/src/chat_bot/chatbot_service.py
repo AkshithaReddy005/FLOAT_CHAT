@@ -14,6 +14,11 @@ from rag_pipeline.query_classifier import QueryClassifier
 from rag_pipeline.sql_generator import SQLGenerator
 from utils.visualization_builder import VisualizationBuilder
 from rag_pipeline.rag_engine import RAGEngine
+from rag_pipeline.unified_query_parser import UnifiedQueryParser
+from rag_pipeline.consistency_validator import ConsistencyValidator
+from rag_pipeline.parameter_logger import parameter_logger
+import time
+import os
 
 load_dotenv()
 
@@ -22,159 +27,344 @@ class ChatbotService:
     def __init__(self, vector_store: VectorStore):
         self.vector_store = vector_store
         
-        # Initialize modular components
+        # Initialize services
         self.query_classifier = QueryClassifier()
         self.sql_generator = SQLGenerator()
+        
+        # Initialize parser with LLM strategy if API key available
+        gemini_key = os.getenv('GEMINI_API_KEY')
+        extraction_strategy = os.getenv('PARAM_EXTRACTOR', 'llm_first' if gemini_key else 'heuristic_only')
+        self.query_parser = UnifiedQueryParser(gemini_key, extraction_strategy)
         self.visualization_builder = VisualizationBuilder()
         self.rag_engine = RAGEngine()
         
-        print("Enhanced Chatbot Service initialized with modular RAG components")
+        # Initialize new unified components
+        self.consistency_validator = ConsistencyValidator()
+        
+        print("Enhanced Chatbot Service initialized with unified parameter flow")
     
     async def process_chat_query(self, user_query: str, db: Session, session_context: dict = None) -> Dict:
-        """Process a natural language query using enhanced RAG pipeline"""
+        """Process a natural language query using unified parameter flow"""
+        
+        start_time = time.time()
+        timing_data = {}
+        
+        # Initialize pipeline flow tracking
+        pipeline_flow = {
+            "total_duration": "0.000s",
+            "steps": [],
+            "parameter_extraction": {},
+            "sql_generation": {},
+            "chroma_search": {},
+            "api_response": {},
+            "consistency_validation": {}
+        }
         
         try:
             # Step 1: Classify the query
+            classify_start = time.time()
             query_classification = self.query_classifier.classify_query(user_query)
-            print(f"Query Classification: {query_classification}")
+            timing_data['classification'] = time.time() - classify_start
             
-            # Step 1.5: Check if this is a specific chart request
-            chart_classification = self.query_classifier.classify_chart_request(user_query)
-            is_chart_request = chart_classification.get("is_chart_request", False)
-            print(f"Chart Request Detection: {chart_classification}")
+            # Step 2: UNIFIED PARAMETER EXTRACTION (Single Source of Truth)
+            parse_start = time.time()
+            parameter_context = self.query_parser.parse_query(user_query, session_context, query_classification)
+            step_time = time.time() - parse_start
+            timing_data['parameter_extraction'] = step_time
+            
+            # Track parameter extraction in pipeline flow
+            pipeline_flow["parameter_extraction"] = {
+                "duration": f"{step_time:.4f}s",
+                "input_query": user_query,
+                "extracted_location": parameter_context.location_name or "Not specified",
+                "extracted_parameters": parameter_context.parameters or [],
+                "extracted_years": parameter_context.date_years or [],
+                "confidence_score": parameter_context.confidence_score,
+                "complexity_level": parameter_context.complexity_level,
+                "is_chart_request": parameter_context.is_chart_request,
+                "summary": parameter_context.get_summary()
+            }
+            pipeline_flow["steps"].append({
+                "step": "Parameter Extraction",
+                "duration": f"{step_time:.4f}s",
+                "status": "success",
+                "details": f"Extracted {len(parameter_context.parameters or [])} parameters with {(parameter_context.confidence_score * 100):.1f}% confidence"
+            })
+            
+            # Log parameter extraction
+            parameter_logger.log_parameter_extraction(user_query, parameter_context)
+            
+            print(f"Unified Parameters: {parameter_context.get_summary()}")
             
         except Exception as e:
-            print(f"Query classification failed: {e}")
-            # Use default classification
-            query_classification = {
-                "needs_data": True,
-                "is_analytical": False,
-                "has_temporal": False,
-                "has_spatial": False,
-                "complexity_level": "simple"
-            }
-            chart_classification = {"is_chart_request": False}
-            is_chart_request = False
+            print(f"Query processing failed: {e}")
+            # Create fallback response
+            return await self.create_fallback_response(user_query, db)
         
         try:
-            # Step 2: Retrieve relevant context from ChromaDB with increased results for better coverage
-            context_results = self.vector_store.search(user_query, n_results=25)
+            # Step 3: Retrieve context using unified parameter context
+            context_start = time.time()
+            context_results = self.vector_store.search_with_context(parameter_context, n_results=25)
+            step_time = time.time() - context_start
+            timing_data['context_retrieval'] = step_time
             
-            # Check if context is actually relevant to avoid noise
+            # Track ChromaDB search in pipeline flow
+            chroma_filters = parameter_context.to_chroma_filters()
+            documents_found = len(context_results.get('documents', [[]])[0])
+            
+            pipeline_flow["chroma_search"] = {
+                "duration": f"{step_time:.4f}s",
+                "search_filters": chroma_filters,
+                "documents_found": documents_found,
+                "n_results_requested": 25,
+                "sample_documents": context_results.get('documents', [[]])[0][:3] if documents_found > 0 else [],
+                "distances": context_results.get('distances', [[]])[0][:3] if documents_found > 0 else []
+            }
+            pipeline_flow["steps"].append({
+                "step": "ChromaDB Vector Search",
+                "duration": f"{step_time:.4f}s",
+                "status": "success",
+                "details": f"Vector search returned {documents_found} documents"
+            })
+            
+            # Log ChromaDB search
+            parameter_logger.log_chroma_search(
+                parameter_context, chroma_filters, documents_found
+            )
+            
+            # Filter out very short or irrelevant context
             if context_results.get('documents') and context_results['documents'][0]:
-                # Filter out very short or irrelevant context
                 documents = context_results['documents'][0]
                 filtered_docs = [doc for doc in documents if len(doc.strip()) > 30]
                 context_results['documents'] = [filtered_docs] if filtered_docs else [[]]
         except Exception as e:
             print(f"Context retrieval failed: {e}")
-            # Use empty context
             context_results = {'documents': [[]], 'distances': [[]]}
         
-        # Step 3: Get data if needed
+        # Step 4: Get data using unified parameter context
         db_results = []
         sql_used = None
         
-        if query_classification["needs_data"]:
+        if parameter_context.is_chart_request or query_classification["needs_data"]:
             try:
-                # For chart requests, use simplified data retrieval to ensure we get enough data
-                if is_chart_request:
-                    print(f"Chart request detected - using simplified data retrieval for better chart generation")
-                    try:
-                        db_results = self._chart_optimized_data_retrieval(db, user_query, chart_classification)
-                        sql_used = "Chart-optimized query: SELECT * FROM argo_measurements WHERE temperature IS NOT NULL OR salinity IS NOT NULL ORDER BY date DESC LIMIT 1000"
-                        print(f"Chart-optimized query returned {len(db_results)} results")
-                        # If chart-optimized retrieval fails or returns too little data, fallback to normal retrieval
-                        if len(db_results) < 5:
-                            print(f"Chart-optimized query returned insufficient data ({len(db_results)} records), using fallback")
-                            db_results = self._fallback_data_retrieval(db, user_query)
-                            sql_used = "Chart fallback query used due to insufficient optimized data"
-                    except Exception as chart_error:
-                        print(f"Chart-optimized data retrieval failed: {chart_error}, using fallback")
-                        db_results = self._fallback_data_retrieval(db, user_query)
-                        sql_used = "Chart fallback query used due to optimization error"
-                else:
-                    # Generate and execute SQL query with session context
-                    sql_query = await self.sql_generator.generate_sql(
-                        user_query, query_classification, context_results, session_context
+                # Generate SQL using unified parameter context
+                sql_start = time.time()
+                sql_query = await self.sql_generator.generate_sql_from_context(parameter_context)
+                sql_gen_time = time.time() - sql_start
+                timing_data['sql_generation'] = sql_gen_time
+                
+                # Debug: Log SQL query to check if it's filtering properly
+                print(f"DEBUG: Generated SQL query: {sql_query}")
+                print(f"DEBUG: Parameter context location: {parameter_context.location_name}")
+                print(f"DEBUG: Parameter context bounds: {parameter_context.location_bounds}")
+                print(f"DEBUG: Parameter context depth_range: {parameter_context.depth_range}")
+                print(f"DEBUG: Parameter context depth_type: {parameter_context.depth_type}")
+                print(f"DEBUG: Parameter extraction method: {getattr(parameter_context, 'extraction_method', 'unknown')}")
+                
+                if sql_query and self.sql_generator.validate_sql(sql_query):
+                    # Log SQL generation
+                    parameter_logger.log_sql_generation(
+                        parameter_context, sql_query, "unified_context"
                     )
                     
-                    if sql_query and self.sql_generator.validate_sql(sql_query):
-                        print(f"Executing validated SQL: {sql_query}")
-                        db_results = self._execute_sql_query(db, sql_query)
-                        sql_used = sql_query
-                        print(f"SQL returned {len(db_results)} results")
-                    else:
-                        if sql_query:
-                            print(f"SQL validation failed for: {sql_query}")
-                        else:
-                            print("SQL generation failed")
-                        print("Using fallback data retrieval")
-                        db_results = self._fallback_data_retrieval(db, user_query)
+                    # Execute SQL
+                    execute_start = time.time()
+                    db_results = self._execute_sql_query(db, sql_query)
+                    execute_time = time.time() - execute_start
+                    timing_data['sql_execution'] = execute_time
+                    sql_used = sql_query
+                    
+                    # Track SQL generation and execution in pipeline flow
+                    pipeline_flow["sql_generation"] = {
+                        "generation_duration": f"{sql_gen_time:.4f}s",
+                        "execution_duration": f"{execute_time:.4f}s",
+                        "total_duration": f"{(sql_gen_time + execute_time):.4f}s",
+                        "generated_query": sql_query,
+                        "sql_filters": parameter_context.to_sql_filters(),
+                        "records_returned": len(db_results),
+                        "sample_results": [dict(row) if hasattr(row, '_asdict') else row for row in db_results[:3]] if db_results else []
+                    }
+                    pipeline_flow["steps"].append({
+                        "step": "SQL Generation & Execution",
+                        "duration": f"{(sql_gen_time + execute_time):.4f}s",
+                        "status": "success",
+                        "details": f"Generated and executed SQL query, returned {len(db_results)} records"
+                    })
+                    
+                    print(f"Unified SQL returned {len(db_results)} results")
+                    
+                    # Log service call
+                    parameter_logger.log_service_call(
+                        "SQL", parameter_context, parameter_context.to_sql_filters(), len(db_results)
+                    )
+                else:
+                    print(f"SQL validation failed, using fallback")
+                    db_results = self._fallback_data_retrieval(db, user_query)
+                    sql_used = "Fallback query due to validation failure"
+                    
             except Exception as e:
-                print(f"Data retrieval failed: {e}")
-                print("Using emergency fallback data retrieval")
+                print(f"Unified data retrieval failed: {e}")
                 db_results = self._fallback_data_retrieval(db, user_query)
+                sql_used = "Emergency fallback query"
+        
+        # Step 5: Validate consistency before proceeding
+        validation_start = time.time()
+        validation_report = self.consistency_validator.validate_service_consistency(
+            parameter_context, db_results, context_results, ""
+        )
+        step_time = time.time() - validation_start
+        timing_data['consistency_validation'] = step_time
+        
+        # Track consistency validation in pipeline flow
+        pipeline_flow["consistency_validation"] = {
+            "duration": f"{step_time:.4f}s",
+            "is_consistent": validation_report["is_consistent"],
+            "violations_count": len(validation_report.get("violations", [])),
+            "violations": validation_report.get("violations", []),
+            # derive a simple score if not provided
+            "consistency_score": 1.0 if validation_report.get("is_consistent", True) else max(0.0, 1.0 - (len(validation_report.get("violations", [])) / 10.0)),
+            "detailed_report": {
+                "warnings": validation_report.get("warnings", []),
+                "service_stats": validation_report.get("service_stats", {})
+            }
+        }
+        pipeline_flow["steps"].append({
+            "step": "Consistency Validation",
+            "duration": f"{step_time:.4f}s",
+            "status": "success" if validation_report["is_consistent"] else "warning",
+            "details": f"Found {len(validation_report.get('violations', []))} violations, consistency score: "
+                       f"{(1.0 if validation_report.get('is_consistent', True) else max(0.0, 1.0 - (len(validation_report.get('violations', [])) / 10.0))):.2f}"
+        })
+        
+        # Log validation results
+        parameter_logger.log_consistency_validation(parameter_context, validation_report)
+        
+        # Check if we should fail the request due to consistency issues
+        should_fail, failure_reason = self.consistency_validator.should_fail_request(validation_report)
+        if should_fail:
+            parameter_logger.log_request_failure(
+                parameter_context, failure_reason, 
+                {'sql_results': db_results, 'chroma_results': context_results}
+            )
+            
+            # Generate fallback with explanation
+            fallback_explanation = self.consistency_validator.generate_fallback_explanation(
+                parameter_context, validation_report
+            )
+            
+            return {
+                "response": f"I found some inconsistencies in the data that don't match your request exactly. {fallback_explanation}",
+                "data": db_results[:10],  # Limited data for safety
+                "visualization": {"map": {"points": []}, "depth_profile": {"data": []}},
+                "query_params": {
+                    "consistency_failed": True,
+                    "failure_reason": failure_reason,
+                    "parameter_summary": parameter_context.get_summary()
+                },
+                "context_count": 0
+            }
         
         try:
-            # Step 4: Generate AI response using RAG with session context
+            # Step 6: Generate AI response using RAG
+            ai_start = time.time()
             ai_response = await self.rag_engine.generate_response(
-                user_query, context_results, db_results, query_classification, session_context, is_chart_request
+                user_query, context_results, db_results, query_classification, 
+                session_context, parameter_context.is_chart_request
             )
+            step_time = time.time() - ai_start
+            timing_data['ai_generation'] = step_time
+            
+            # Track AI response generation in pipeline flow
+            pipeline_flow["api_response"] = {
+                "duration": f"{step_time:.4f}s",
+                "response_type": "ai_generated",
+                "data_points": len(db_results),
+                "context_documents_used": len(context_results.get('documents', [[]])[0]),
+                "visualization_requested": parameter_context.is_chart_request,
+                "ai_summary": ai_response[:200] + "..." if len(ai_response) > 200 else ai_response
+            }
+            pipeline_flow["steps"].append({
+                "step": "AI Response Generation",
+                "duration": f"{step_time:.4f}s",
+                "status": "success",
+                "details": f"Generated AI response using {len(context_results.get('documents', [[]])[0])} context documents"
+            })
         except Exception as e:
             print(f"AI response generation failed: {e}")
-            # Use built-in fallback response
             ai_response = self._generate_emergency_response(user_query, db_results, query_classification)
         
         try:
-            # Step 5: Build intelligent visualization data with query context
-            # For chart requests, allow visualization with fewer data points
-            min_data_required = 5 if is_chart_request else 10
+            # Step 7: Build visualization data
+            viz_start = time.time()
+            min_data_required = 5 if parameter_context.is_chart_request else 10
             
             if len(db_results) >= min_data_required:
+                # Debug: Log db_results summary for map investigation
+                print(f"DEBUG: Building visualization with {len(db_results)} results")
+                if db_results:
+                    sample = db_results[0]
+                    print(f"DEBUG: Sample result keys: {list(sample.keys())}")
+                    print(f"DEBUG: Sample lat/lon: {sample.get('latitude')}, {sample.get('longitude')}")
+                    print(f"DEBUG: Sample float_id: {sample.get('float_id')}")
+                
                 viz_data = await self.visualization_builder.build_visualization(
                     db_results, query_classification, user_query, context_results
                 )
                 
-                # For chart requests, be more permissive with meaningful visualization checks
-                if is_chart_request or self._has_meaningful_visualizations(viz_data):
+                if parameter_context.is_chart_request or self._has_meaningful_visualizations(viz_data):
                     print(f"Visualization data generated successfully")
                 else:
-                    print(f"Generated visualizations deemed not meaningful, using empty structure")
-                    viz_data = {"map": {"points": []}, "depth_profile": {"data": []}, "reasoning": "Insufficient data quality for meaningful visualizations"}
+                    viz_data = {"map": {"points": []}, "depth_profile": {"data": []}, 
+                              "reasoning": "Insufficient data quality for meaningful visualizations"}
             else:
-                print(f"Insufficient data points ({len(db_results)}) for visualization generation")
-                viz_data = {"map": {"points": []}, "depth_profile": {"data": []}, "reasoning": f"Only {len(db_results)} data points available - minimum 10 required for visualizations"}
+                viz_data = {"map": {"points": []}, "depth_profile": {"data": []}, 
+                          "reasoning": f"Only {len(db_results)} data points - minimum {min_data_required} required"}
+            
+            timing_data['visualization'] = time.time() - viz_start
                 
         except Exception as e:
             print(f"Visualization building failed: {e}")
-            # Use default visualization structure
-            viz_data = {"map": {"points": []}, "depth_profile": {"data": []}, "reasoning": "Visualization generation error"}
+            viz_data = {"map": {"points": []}, "depth_profile": {"data": []}, 
+                       "reasoning": "Visualization generation error"}
         
-        # Step 6: Generate response summary for session context
+        # Step 8: Generate response summary and finalize
         try:
             response_summary = self.rag_engine.generate_response_summary(ai_response, db_results, query_classification)
         except Exception as e:
             print(f"Failed to generate response summary: {e}")
             response_summary = "AI response generated"
         
-        # Step 7: Intelligently limit data based on query context
+        # Intelligently limit data based on parameter context
         limited_data = self._intelligently_limit_data(db_results, user_query, query_classification)
         
-        # Step 8: Prepare response
+        # Calculate total processing time
+        total_time = time.time() - start_time
+        timing_data['total'] = total_time
+        
+        # Finalize pipeline flow tracking
+        pipeline_flow["total_duration"] = f"{total_time:.4f}s"
+        
+        # Log performance metrics
+        parameter_logger.log_performance_metrics(parameter_context, timing_data)
+        
+        # Prepare unified response
         return {
             "response": ai_response,
             "data": limited_data,
             "visualization": viz_data,
+            "pipeline_flow": pipeline_flow,  # Add pipeline flow data to response
             "query_params": {
                 "classification": query_classification,
+                "parameter_summary": parameter_context.get_summary(),
                 "sql_used": sql_used,
                 "context_retrieved": len(context_results.get('documents', [[]])[0]) if context_results.get('documents') else 0,
                 "data_points": len(db_results),
-                "limited_to": len(limited_data)
+                "limited_to": len(limited_data),
+                "consistency_status": "passed" if validation_report["is_consistent"] else "failed",
+                "processing_time": f"{timing_data['total']:.2f}s"
             },
             "context_count": len(context_results.get('documents', [[]])[0]) if context_results.get('documents') else 0,
-            "response_summary": response_summary  # Add summary for session context
+            "response_summary": response_summary
         }
 
     async def create_fallback_response(self, user_query: str, db: Session) -> Dict:

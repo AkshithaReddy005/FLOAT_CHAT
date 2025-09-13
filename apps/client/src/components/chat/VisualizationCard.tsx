@@ -36,12 +36,9 @@ export const VisualizationCard: React.FC<VisualizationCardProps> = ({
       const hasRealMeasurements = (item.temperature !== 0 && item.temperature != null) ||
                                 (item.salinity !== 0 && item.salinity != null) ||
                                 (item.depth !== 0 && item.depth != null);
-      const hasRealFloatId = item.float_id && 
-                           !item.float_id.includes('float_1') && 
-                           !item.float_id.includes('000000') &&
-                           item.float_id !== '';
+      const hasValidFloatId = item.float_id && item.float_id !== '';
       
-      return hasRealCoords && hasRealMeasurements && hasRealFloatId;
+      return hasRealCoords && hasRealMeasurements && hasValidFloatId;
     });
   };
 
@@ -52,15 +49,15 @@ export const VisualizationCard: React.FC<VisualizationCardProps> = ({
   // Only show if we have real data
   const hasRealResults = results.length > 0 && isRealData(results);
 
-  // Determine which tabs to show based on available data
+  // Determine which tabs to show based on available data - more permissive
   const availableTabs = useMemo(
     () => ({
       custom: !!customChart,
-      data: hasRealResults, // Only show data tab if we have real, meaningful results
-      map: mapPoints.length > 0 && hasRealResults,
-      profile: depthProfileData.length > 0 && hasRealResults
+      data: results.length > 0, // Show data tab if we have any results
+      map: mapPoints.length > 0 || results.length > 0, // Show map if we have map points OR results with coordinates
+      profile: depthProfileData.length > 0
     }),
-    [customChart, hasRealResults, mapPoints.length, depthProfileData.length]
+    [customChart, results.length, mapPoints.length, depthProfileData.length]
   );
 
   // Set default active tab to first available (prioritize custom charts)
@@ -73,13 +70,8 @@ export const VisualizationCard: React.FC<VisualizationCardProps> = ({
     }
   }, [availableTabs, activeTab]);
 
-  // Don't render if no meaningful visualization data OR no real data is available
-  if (!hasVisualizationData && !hasRealResults) {
-    return null;
-  }
-  
-  // Don't render if we only have fake/sample data
-  if (results.length > 0 && !isRealData(results) && !customChart) {
+  // Always show if we have results - remove strict filtering
+  if (results.length === 0 && !hasVisualizationData) {
     return null;
   }
 

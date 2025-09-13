@@ -272,7 +272,7 @@ class QueryClassifier:
                 "x_axis": x_axis,
                 "y_axis": y_axis,
                 "confidence": max(0.6, chart_type_confidence) if is_chart_request else 0.0,
-                "raw_keywords_found": [kw for kw in chart_indicators if kw in query_lower]
+                "raw_keywords_found": [kw for kw in primary_chart_indicators if kw in query_lower]
             }
             
         except Exception as e:
