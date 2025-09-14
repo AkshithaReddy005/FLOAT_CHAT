@@ -42,10 +42,20 @@ class VectorStore:
     
     def add_measurements(self, measurements: List[Dict], file_hash: str = None):
         """Add ARGO measurements to vector store with comprehensive duplicate detection"""
+        # Ensure collection exists (handle case where collection was deleted)
+        try:
+            self.collection.count()
+        except Exception as e:
+            if "does not exists" in str(e) or "does not exist" in str(e):
+                print(f"Collection missing, recreating: {e}")
+                self.collection = self.client.get_or_create_collection("argo_data")
+            else:
+                raise e
+
         documents = []
         metadatas = []
         ids = []
-        
+
         new_measurements_count = 0
         duplicate_count = 0
         batch_ids_seen = set()  # Track IDs within current batch
@@ -97,10 +107,19 @@ class VectorStore:
             new_measurement_data = []
             
             try:
-                # Batch check for existing IDs
+                # Batch check for existing IDs - with collection existence check
                 ids_to_check = [item[1] for item in measurement_data]
-                existing_results = self.collection.get(ids=ids_to_check)
-                existing_ids = set(existing_results['ids']) if existing_results['ids'] else set()
+                try:
+                    existing_results = self.collection.get(ids=ids_to_check)
+                    existing_ids = set(existing_results['ids']) if existing_results['ids'] else set()
+                except Exception as collection_error:
+                    if "does not exists" in str(collection_error):
+                        print(f"Collection recreated during batch check, retrying")
+                        self.collection = self.client.get_or_create_collection("argo_data")
+                        existing_results = self.collection.get(ids=ids_to_check)
+                        existing_ids = set(existing_results['ids']) if existing_results['ids'] else set()
+                    else:
+                        raise collection_error
                 
                 # Filter out existing measurements
                 for measurement, measurement_id in measurement_data:
@@ -192,12 +211,12 @@ class VectorStore:
                 if final_documents and len(set(final_ids)) == len(final_ids):
                     print(f"Adding {len(final_ids)} unique documents to ChromaDB")
                     print(f"Sample IDs being added: {final_ids[:5]}{'...' if len(final_ids) > 5 else ''}")
-                    
+
                     # Final validation: absolutely ensure no duplicates
                     id_counter = {}
                     for id_val in final_ids:
                         id_counter[id_val] = id_counter.get(id_val, 0) + 1
-                    
+
                     duplicates_found = {id_val: count for id_val, count in id_counter.items() if count > 1}
                     if duplicates_found:
                         print(f"CRITICAL: Found duplicates in final_ids: {duplicates_found}")
@@ -207,17 +226,48 @@ class VectorStore:
                         final_metadatas = final_metadatas[:len(unique_final_ids)]
                         final_ids = unique_final_ids
                         print(f"Corrected to {len(final_ids)} unique items")
-                    
-                    self.collection.add(
-                        documents=final_documents,
-                        metadatas=final_metadatas,
-                        ids=final_ids
-                    )
-                    print("Successfully added to ChromaDB")
+                        # Update the actual count to reflect what we're adding
+                        new_measurements_count = len(final_ids)
+
+                    try:
+                        self.collection.add(
+                            documents=final_documents,
+                            metadatas=final_metadatas,
+                            ids=final_ids
+                        )
+                        print(f"Successfully added {len(final_ids)} documents to ChromaDB")
+                    except Exception as add_error:
+                        if "does not exists" in str(add_error) or "does not exist" in str(add_error):
+                            print(f"Collection missing during add, recreating and retrying: {add_error}")
+                            self.collection = self.client.get_or_create_collection("argo_data")
+                            self.collection.add(
+                                documents=final_documents,
+                                metadatas=final_metadatas,
+                                ids=final_ids
+                            )
+                            print(f"Successfully added {len(final_ids)} documents to recreated ChromaDB collection")
+                        else:
+                            raise add_error
+
+                        # Verify the addition worked
+                        try:
+                            post_add_count = self.collection.count()
+                            print(f"ChromaDB collection now contains {post_add_count} total measurements")
+                        except Exception as verify_e:
+                            print(f"Could not verify ChromaDB count after addition: {verify_e}")
+
+                    except Exception as add_e:
+                        print(f"CRITICAL: Failed to add documents to ChromaDB: {add_e}")
+                        # Reset the count since addition failed
+                        new_measurements_count = 0
+                        duplicate_count += len(final_ids)  # Count as duplicates since they weren't added
+
                 elif not final_documents:
                     print("No documents to add after deduplication")
                 else:
                     print(f"BLOCKING ChromaDB add due to remaining duplicates: {len(final_ids)} items, {len(set(final_ids))} unique")
+                    new_measurements_count = 0
+                    duplicate_count += len(documents)  # Count as duplicates since they weren't added
                     
             except Exception as e:
                 # If even this fails, try to identify the specific issue
@@ -315,28 +365,35 @@ class VectorStore:
             "salinity": float(measurement['salinity']),
             "pressure": float(measurement['pressure']),
             "created_at": datetime.utcnow().isoformat(),
-            
+
             # Enhanced analytics features
-            "depth_category": self._categorize_depth(measurement['depth']),
-            "temperature_category": self._categorize_temperature(measurement['temperature']),
-            "salinity_category": self._categorize_salinity(measurement['salinity']),
-            "water_mass_type": self._identify_water_mass(measurement),
-            "oceanic_region": self._identify_oceanic_region(measurement['latitude'], measurement['longitude']),
-            "season": self._get_season_from_date(measurement['date']),
-            
-            # Gradients and analytics hints
-            "is_thermocline_depth": 50 <= measurement['depth'] <= 200,
-            "is_surface_measurement": measurement['depth'] < 50,
-            "is_deep_measurement": measurement['depth'] > 1000,
-            "temperature_anomaly": self._calculate_temperature_anomaly(measurement),
-            "salinity_gradient_zone": self._is_salinity_gradient_zone(measurement),
-            
-            # Visualization hints
+            "depth_category": str(self._categorize_depth(measurement['depth'])),
+            "temperature_category": str(self._categorize_temperature(measurement['temperature'])),
+            "salinity_category": str(self._categorize_salinity(measurement['salinity'])),
+            "water_mass_type": str(self._identify_water_mass(measurement)),
+            "oceanic_region": str(self._identify_oceanic_region(measurement['latitude'], measurement['longitude'])),
+            "season": str(self._get_season_from_date(measurement['date'])),
+        }
+
+        # Add analytics hints with explicit type conversion to avoid numpy bool issues
+        depth = float(measurement['depth'])
+        temp_not_none = measurement['temperature'] is not None
+        sal_not_none = measurement['salinity'] is not None
+
+        metadata.update({
+            # Gradients and analytics hints - FIXED: Ensure native Python types
+            "is_thermocline_depth": True if 50 <= depth <= 200 else False,
+            "is_surface_measurement": True if depth < 50 else False,
+            "is_deep_measurement": True if depth > 1000 else False,
+            "temperature_anomaly": str(self._calculate_temperature_anomaly(measurement)),
+            "salinity_gradient_zone": True if self._is_salinity_gradient_zone(measurement) else False,
+
+            # Visualization hints - FIXED: Ensure native Python types
             "suitable_for_depth_profile": True,
             "suitable_for_geographic_mapping": True,
-            "suitable_for_temperature_analysis": measurement['temperature'] is not None,
-            "suitable_for_salinity_analysis": measurement['salinity'] is not None
-        }
+            "suitable_for_temperature_analysis": True if temp_not_none else False,
+            "suitable_for_salinity_analysis": True if sal_not_none else False
+        })
         
         return metadata
     
@@ -496,32 +553,35 @@ class VectorStore:
     
     def _generate_measurement_id(self, measurement: Dict) -> str:
         """Generate a unique ID for a measurement based on key identifying fields"""
-        # Use same logic as database hash for consistency
-        # Convert date to datetime if it's a string
-        date_obj = measurement['date']
-        if isinstance(date_obj, str):
-            from datetime import datetime
-            date_obj = datetime.fromisoformat(date_obj.replace('Z', '+00:00'))
-        
-        # Include temperature, salinity, and pressure to make IDs more unique
-        # This reduces the chance of hash collisions for measurements at same location/time/depth
-        temp_val = measurement.get('temperature')
-        sal_val = measurement.get('salinity')
-        press_val = measurement.get('pressure')
-        
-        # Fixed f-string formatting issue
-        key_string = (f"{measurement['float_id']}_"
-                     f"{measurement['latitude']:.6f}_"
-                     f"{measurement['longitude']:.6f}_"
-                     f"{date_obj.isoformat()}_"
-                     f"{measurement['depth']:.2f}_"
-                     f"{'null' if temp_val is None else f'{temp_val:.3f}'}_"
-                     f"{'null' if sal_val is None else f'{sal_val:.3f}'}_"
-                     f"{'null' if press_val is None else f'{press_val:.2f}'}")
-        
-        # Use full hash (64 chars) for better uniqueness but take only 32 for ChromaDB compatibility
-        full_hash = hashlib.sha256(key_string.encode()).hexdigest()
-        return full_hash[:32]
+        try:
+            # Use SAME logic as database hash for consistency
+            # This MUST match ArgoMeasurement.generate_measurement_hash exactly
+            date_obj = measurement['date']
+            if isinstance(date_obj, str):
+                from datetime import datetime
+                date_obj = datetime.fromisoformat(date_obj.replace('Z', '+00:00'))
+
+            # Use ONLY the core fields to match database logic exactly
+            key_string = f"{measurement['float_id']}_{measurement['latitude']:.6f}_{measurement['longitude']:.6f}_{date_obj.isoformat()}_{measurement['depth']:.2f}"
+
+            # Use full hash (64 chars) and take only 32 chars to match database
+            full_hash = hashlib.sha256(key_string.encode()).hexdigest()
+            measurement_id = full_hash[:32]
+
+            # Verify this matches the measurement_hash from the measurement dict if available
+            if 'measurement_hash' in measurement:
+                if measurement['measurement_hash'] != measurement_id:
+                    print(f"WARNING: Vector store ID mismatch! Generated: {measurement_id}, Expected: {measurement['measurement_hash']}")
+                    # Use the measurement_hash from the measurement to ensure consistency
+                    return measurement['measurement_hash']
+
+            return measurement_id
+
+        except Exception as e:
+            print(f"ERROR generating measurement ID: {e}")
+            # Fallback to simple hash
+            fallback_string = f"{measurement.get('float_id', 'unknown')}_{measurement.get('latitude', 0)}_{measurement.get('longitude', 0)}_{measurement.get('depth', 0)}"
+            return hashlib.sha256(fallback_string.encode()).hexdigest()[:32]
     
     def search(self, query: str, n_results: int = 10, filters: Dict = None) -> Dict:
         """Search with optional metadata filters (legacy method)"""

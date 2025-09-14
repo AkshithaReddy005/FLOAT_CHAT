@@ -2,18 +2,22 @@ import { useState, useRef, useCallback } from 'react';
 
 interface DragDropUploadProps {
   onFileSelect: (file: File) => void;
+  onMultipleFileSelect?: (files: File[]) => void;
   disabled?: boolean;
   accept?: string;
   maxSize?: number;
   className?: string;
+  allowMultiple?: boolean;
 }
 
-export const DragDropUpload = ({ 
-  onFileSelect, 
-  disabled = false, 
+export const DragDropUpload = ({
+  onFileSelect,
+  onMultipleFileSelect,
+  disabled = false,
   accept = '.nc,.netcdf',
   maxSize = 50 * 1024 * 1024, // 50MB
-  className = ''
+  className = '',
+  allowMultiple = false
 }: DragDropUploadProps) => {
   const [isDragOver, setIsDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -36,6 +40,28 @@ export const DragDropUpload = ({
     }
     onFileSelect(file);
   }, [onFileSelect, validateFile]);
+
+  const handleMultipleFileSelection = useCallback((files: File[]) => {
+    const validFiles: File[] = [];
+    const errors: string[] = [];
+
+    files.forEach((file, index) => {
+      const error = validateFile(file);
+      if (error) {
+        errors.push(`File ${index + 1} (${file.name}): ${error}`);
+      } else {
+        validFiles.push(file);
+      }
+    });
+
+    if (errors.length > 0) {
+      alert(`Some files were invalid:\n${errors.join('\n')}`);
+    }
+
+    if (validFiles.length > 0 && onMultipleFileSelect) {
+      onMultipleFileSelect(validFiles);
+    }
+  }, [onMultipleFileSelect, validateFile]);
 
   const handleDrag = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -60,19 +86,31 @@ export const DragDropUpload = ({
     e.preventDefault();
     e.stopPropagation();
     setIsDragOver(false);
-    
+
     if (disabled) return;
-    
+
     if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-      const file = e.dataTransfer.files[0];
-      handleFileSelection(file);
+      const files = Array.from(e.dataTransfer.files);
+
+      if (allowMultiple && files.length > 1) {
+        handleMultipleFileSelection(files);
+      } else {
+        const file = files[0];
+        handleFileSelection(file);
+      }
     }
-  }, [disabled, handleFileSelection]);
+  }, [disabled, allowMultiple, handleFileSelection, handleMultipleFileSelection]);
 
   const handleFileInput = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
-      const file = e.target.files[0];
-      handleFileSelection(file);
+      const files = Array.from(e.target.files);
+
+      if (allowMultiple && files.length > 1) {
+        handleMultipleFileSelection(files);
+      } else {
+        const file = files[0];
+        handleFileSelection(file);
+      }
     }
   };
 
@@ -88,6 +126,7 @@ export const DragDropUpload = ({
         ref={fileInputRef}
         type="file"
         accept={accept}
+        multiple={allowMultiple}
         onChange={handleFileInput}
         disabled={disabled}
         className="hidden"
@@ -146,7 +185,7 @@ export const DragDropUpload = ({
               Upload ARGO NetCDF Files
             </h3>
             <p className="text-slate-600 text-sm leading-relaxed">
-              Drag and drop your files here, or <span className="text-indigo-600 font-semibold">click to browse</span>
+              Drag and drop your file here, or <span className="text-indigo-600 font-semibold">click to browse</span>
             </p>
           </div>
           

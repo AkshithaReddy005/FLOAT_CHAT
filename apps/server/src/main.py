@@ -12,6 +12,7 @@ from typing import List, Optional
 from dotenv import load_dotenv
 
 from database.database import get_db, create_tables, ArgoMeasurement, UploadedFile
+from database.two_phase_coordinator import TwoPhaseCoordinator
 from rag_pipeline.vector_store import VectorStore
 from utils.netcdf_processor import NetCDFProcessor
 from chat_bot.chatbot_service import ChatbotService
@@ -48,6 +49,7 @@ app.add_middleware(
 vector_store = VectorStore()
 chatbot_service = ChatbotService(vector_store)
 example_generator = ExampleQueryGenerator(vector_store)
+transaction_coordinator = TwoPhaseCoordinator(chunk_size=100)
 
 class QueryRequest(BaseModel):
     query: str
@@ -139,67 +141,53 @@ async def upload_file(file: UploadFile = File(...), db: Session = Depends(get_db
                 measurement['depth']
             )
         
-        # Store in PostgreSQL with duplicate detection
-        db_measurements = []
-        new_measurements_count = 0
-        duplicate_measurements_count = 0
-        
-        for measurement in measurements:
-            try:
-                # Check if this exact measurement already exists
-                existing_measurement = db.query(ArgoMeasurement).filter(
-                    ArgoMeasurement.measurement_hash == measurement['measurement_hash']
-                ).first()
-                
-                if existing_measurement:
-                    duplicate_measurements_count += 1
-                    continue
-                
-                db_measurement = ArgoMeasurement(**measurement)
-                db_measurements.append(db_measurement)
-                new_measurements_count += 1
-                
-            except Exception as e:
-                print(f"Error processing measurement: {e}")
-                continue
-        
-        # Add new measurements to database
-        if db_measurements:
-            try:
-                db.add_all(db_measurements)
-                db.commit()
-            except IntegrityError as e:
-                db.rollback()
-                # Handle potential race conditions with unique constraints
-                print(f"Integrity error (likely duplicate): {e}")
-                # Re-count actual new measurements
-                new_measurements_count = len([m for m in measurements 
-                                            if not db.query(ArgoMeasurement).filter(
-                                                ArgoMeasurement.measurement_hash == m['measurement_hash']
-                                            ).first()])
-        
-        # Store in ChromaDB with duplicate detection (non-blocking)
-        try:
-            vector_results = vector_store.add_measurements(measurements, file_hash)
-        except Exception as vector_e:
-            print(f"Vector store operation failed: {vector_e}")
-            # Continue processing even if vector store fails
-            vector_results = {
-                "new_measurements": 0,
-                "duplicates_skipped": 0,
-                "total_processed": len(measurements),
-                "error": "Vector store operation failed but data was saved to database"
-            }
-        
-        # Record the uploaded file
-        uploaded_file = UploadedFile(
-            filename=file.filename,
+        # Use new chunked transaction system for reliable data consistency
+        print(f"Processing {len(measurements)} measurements using chunked transaction system")
+        start_transaction_time = time.time()
+
+        # Prepare file record for insertion
+        file_record = {
+            'filename': file.filename,
+            'file_hash': file_hash,
+            'file_size': file_size
+        }
+
+        # Execute coordinated transaction
+        coord_result = transaction_coordinator.execute_coordinated_transaction(
+            db=db,
+            vector_store=vector_store,
+            measurements=measurements,
             file_hash=file_hash,
-            file_size=file_size,
-            measurements_count=new_measurements_count
+            file_record=file_record
         )
-        db.add(uploaded_file)
-        db.commit()
+
+        transaction_time = time.time() - start_transaction_time
+        print(f"Coordinated transaction completed in {transaction_time:.2f}s")
+
+        # Extract results for response
+        new_measurements_count = coord_result.measurements_processed
+        duplicate_measurements_count = 0
+        vector_results = coord_result.chromadb_details or {}
+
+        if coord_result.postgresql_details:
+            duplicate_measurements_count = coord_result.postgresql_details.duplicate_skips
+            print(f"Transaction summary: {new_measurements_count} inserted, "
+                  f"{duplicate_measurements_count} duplicates, "
+                  f"{coord_result.postgresql_details.failed_inserts} failed")
+
+        if not coord_result.consistency_maintained:
+            print(f"WARNING: Data consistency issue: {coord_result.error_details}")
+        elif not coord_result.chromadb_success:
+            print(f"INFO: ChromaDB processing failed but PostgreSQL succeeded: {coord_result.error_details}")
+
+        # Update vector_results for backward compatibility
+        if 'new_measurements' not in vector_results:
+            vector_results = {
+                "new_measurements": vector_results.get('new_measurements', 0),
+                "duplicates_skipped": vector_results.get('duplicates_skipped', 0),
+                "total_processed": len(measurements),
+                "coordinator_status": "success" if coord_result.consistency_maintained else "partial_failure"
+            }
         
         # Prepare response message
         total_processed = len(measurements)
@@ -239,200 +227,6 @@ async def upload_file(file: UploadFile = File(...), db: Session = Depends(get_db
         # Clean up temporary file
         if temp_file_path:
             _safe_delete_file(temp_file_path)
-
-@app.post("/admin/upload-multiple")
-async def upload_multiple_files(files: List[UploadFile] = File(...), db: Session = Depends(get_db)):
-    """Admin endpoint to upload multiple ARGO NetCDF files with batch processing"""
-    
-    if not files:
-        raise HTTPException(status_code=400, detail="No files provided.")
-    
-    if len(files) > 20:  # Reasonable limit for batch processing
-        raise HTTPException(status_code=400, detail="Too many files. Maximum 20 files allowed per batch.")
-    
-    results = []
-    total_new_measurements = 0
-    total_duplicates = 0
-    total_errors = 0
-    
-    for i, file in enumerate(files):
-        file_result = {
-            "filename": file.filename,
-            "index": i + 1,
-            "status": "processing"
-        }
-        
-        temp_file_path = None
-        try:
-            # Validate file type
-            if not file.filename or not file.filename.endswith(('.nc', '.netcdf')):
-                file_result.update({
-                    "status": "error",
-                    "error": "Invalid file format. Only NetCDF files are allowed.",
-                    "measurements_count": 0
-                })
-                total_errors += 1
-                results.append(file_result)
-                continue
-            
-            # Read file content and calculate hash
-            content = await file.read()
-            file_hash = hashlib.sha256(content).hexdigest()
-            file_size = len(content)
-            
-            # Check if this exact file has been uploaded before
-            existing_file = db.query(UploadedFile).filter(UploadedFile.file_hash == file_hash).first()
-            if existing_file:
-                file_result.update({
-                    "status": "duplicate_file",
-                    "message": f"File already uploaded on {existing_file.upload_date}",
-                    "measurements_count": 0,
-                    "existing_measurements": existing_file.measurements_count,
-                    "original_upload_date": existing_file.upload_date.isoformat()
-                })
-                total_duplicates += 1
-                results.append(file_result)
-                continue
-            
-            # Create temporary file
-            with tempfile.NamedTemporaryFile(delete=False, suffix='.nc') as temp_file:
-                temp_file.write(content)
-                temp_file.flush()
-                temp_file_path = temp_file.name
-            
-            # Validate NetCDF file
-            if not NetCDFProcessor.validate_file(temp_file_path):
-                file_result.update({
-                    "status": "error",
-                    "error": "Invalid NetCDF file format.",
-                    "measurements_count": 0
-                })
-                total_errors += 1
-                results.append(file_result)
-                continue
-            
-            # Process the file
-            measurements = NetCDFProcessor.process_argo_file(temp_file_path)
-            
-            if not measurements:
-                file_result.update({
-                    "status": "error", 
-                    "error": "No valid measurements found in file.",
-                    "measurements_count": 0
-                })
-                total_errors += 1
-                results.append(file_result)
-                continue
-            
-            # Add file hash and measurement hash to each measurement
-            for measurement in measurements:
-                measurement['file_hash'] = file_hash
-                measurement['measurement_hash'] = ArgoMeasurement.generate_measurement_hash(
-                    measurement['float_id'],
-                    measurement['latitude'],
-                    measurement['longitude'],
-                    measurement['date'],
-                    measurement['depth']
-                )
-            
-            # Store in PostgreSQL with duplicate detection
-            db_measurements = []
-            new_measurements_count = 0
-            duplicate_measurements_count = 0
-            
-            for measurement in measurements:
-                try:
-                    # Check if this exact measurement already exists
-                    existing_measurement = db.query(ArgoMeasurement).filter(
-                        ArgoMeasurement.measurement_hash == measurement['measurement_hash']
-                    ).first()
-                    
-                    if existing_measurement:
-                        duplicate_measurements_count += 1
-                        continue
-                    
-                    db_measurement = ArgoMeasurement(**measurement)
-                    db_measurements.append(db_measurement)
-                    new_measurements_count += 1
-                    
-                except Exception as e:
-                    print(f"Error processing measurement: {e}")
-                    continue
-            
-            # Add new measurements to database
-            if db_measurements:
-                try:
-                    db.add_all(db_measurements)
-                    db.commit()
-                except IntegrityError as e:
-                    db.rollback()
-                    print(f"Integrity error (likely duplicate): {e}")
-                    # Re-count actual new measurements
-                    new_measurements_count = len([m for m in measurements 
-                                                if not db.query(ArgoMeasurement).filter(
-                                                    ArgoMeasurement.measurement_hash == m['measurement_hash']
-                                                ).first()])
-            
-            # Store in ChromaDB with duplicate detection
-            vector_results = vector_store.add_measurements(measurements, file_hash)
-            
-            # Record the uploaded file
-            uploaded_file = UploadedFile(
-                filename=file.filename,
-                file_hash=file_hash,
-                file_size=file_size,
-                measurements_count=new_measurements_count
-            )
-            db.add(uploaded_file)
-            db.commit()
-            
-            # Update file result
-            file_result.update({
-                "status": "completed" if new_measurements_count > 0 else "all_duplicates",
-                "measurements_count": new_measurements_count,
-                "duplicate_measurements": duplicate_measurements_count,
-                "total_in_file": len(measurements),
-                "vector_stats": vector_results,
-                "file_size": file_size
-            })
-            
-            total_new_measurements += new_measurements_count
-            if duplicate_measurements_count > 0:
-                total_duplicates += 1
-            
-            results.append(file_result)
-                
-        except Exception as e:
-            db.rollback()
-            file_result.update({
-                "status": "error",
-                "error": f"Processing failed: {str(e)}",
-                "measurements_count": 0
-            })
-            total_errors += 1
-            results.append(file_result)
-        
-        finally:
-            # Clean up temporary file
-            if temp_file_path:
-                _safe_delete_file(temp_file_path)
-    
-    # Prepare summary
-    successful_files = len([r for r in results if r["status"] == "completed"])
-    duplicate_files = len([r for r in results if r["status"] == "duplicate_file"])
-    
-    return {
-        "message": f"Batch upload completed: {successful_files} files processed successfully, {duplicate_files} duplicates, {total_errors} errors",
-        "summary": {
-            "total_files": len(files),
-            "successful_files": successful_files,
-            "duplicate_files": duplicate_files,
-            "error_files": total_errors,
-            "total_new_measurements": total_new_measurements
-        },
-        "file_results": results,
-        "status": "batch_completed"
-    }
 
 def _safe_delete_file(file_path: str, max_attempts: int = 5, delay: float = 0.1):
     """Safely delete a file with retry logic for Windows file locking issues"""
@@ -1050,6 +844,341 @@ def clear_all_databases(db: Session = Depends(get_db)):
         db.rollback()
         raise HTTPException(status_code=500, detail=f"Failed to clear databases: {str(e)}")
 
+@app.get("/admin/data-consistency-check")
+def check_data_consistency(db: Session = Depends(get_db)):
+    """Comprehensive data consistency check between PostgreSQL and ChromaDB with enhanced edge case handling"""
+    try:
+        # Get PostgreSQL statistics
+        postgres_measurements = db.query(ArgoMeasurement).count()
+        postgres_unique_floats = db.query(ArgoMeasurement.float_id).distinct().count()
+        postgres_files = db.query(UploadedFile).count()
+
+        # Enhanced sample data collection - use dynamic sample size based on data volume
+        sample_size = min(max(10, postgres_measurements // 1000), 50)  # Scale sample size with data volume
+        postgres_sample = db.execute(text("""
+            SELECT float_id, latitude, longitude, date, depth, temperature, salinity, pressure, measurement_hash
+            FROM argo_measurements
+            WHERE temperature IS NOT NULL AND salinity IS NOT NULL AND depth IS NOT NULL
+            ORDER BY created_at DESC
+            LIMIT :sample_size
+        """), {"sample_size": sample_size}).fetchall()
+
+        # Get ChromaDB statistics
+        vector_stats = vector_store.get_collection_stats()
+        chroma_measurements = vector_stats.get('total_measurements', 0)
+
+        # Enhanced vector store connectivity test
+        vector_error = None
+        chroma_searchable = 0
+        try:
+            # Test multiple search patterns to ensure robustness
+            test_searches = [
+                "temperature salinity depth",
+                "oceanographic measurement",
+                "argo float data"
+            ]
+            
+            for search_query in test_searches:
+                # Test with a reasonable sample size to verify searchability
+                test_n_results = min(50, max(10, chroma_measurements // 100))  # Test with up to 50 results
+                sample_search = vector_store.search(search_query, n_results=test_n_results)
+                if sample_search and sample_search.get('documents'):
+                    search_results = sample_search.get('documents', [[]])[0]
+                    chroma_searchable = max(chroma_searchable, len(search_results))
+                    # If we got meaningful results, break early
+                    if len(search_results) >= test_n_results * 0.8:  # Got at least 80% of requested results
+                        break
+            
+        except Exception as e:
+            vector_error = str(e)
+
+        # Initialize consistency tracking
+        consistency_issues = []
+        consistency_score = 100
+        detailed_checks = {
+            "count_consistency": {"passed": True, "details": ""},
+            "vector_searchability": {"passed": True, "details": ""},
+            "sample_verification": {"passed": True, "details": ""},
+            "hash_consistency": {"passed": True, "details": ""},
+            "file_consistency": {"passed": True, "details": ""},
+            "data_completeness": {"passed": True, "details": ""}
+        }
+
+        # 1. Enhanced count consistency check with better edge case handling
+        if postgres_measurements == 0 and chroma_measurements == 0:
+            detailed_checks["count_consistency"]["details"] = "Both databases are empty - consistent but no data"
+        elif postgres_measurements == 0:
+            consistency_issues.append(f"PostgreSQL is empty but ChromaDB has {chroma_measurements} measurements")
+            consistency_score -= 50
+            detailed_checks["count_consistency"]["passed"] = False
+        else:
+            count_diff = abs(postgres_measurements - chroma_measurements)
+            count_diff_percentage = (count_diff / postgres_measurements) * 100
+
+            if count_diff_percentage > 10:  # More than 10% difference is critical
+                consistency_issues.append(f"Critical count difference: PostgreSQL has {postgres_measurements}, ChromaDB has {chroma_measurements} ({count_diff_percentage:.1f}% difference)")
+                consistency_score -= 40
+                detailed_checks["count_consistency"]["passed"] = False
+            elif count_diff_percentage > 5:  # More than 5% difference is significant
+                consistency_issues.append(f"Significant count difference: PostgreSQL has {postgres_measurements}, ChromaDB has {chroma_measurements} ({count_diff_percentage:.1f}% difference)")
+                consistency_score -= 25
+                detailed_checks["count_consistency"]["passed"] = False
+            elif count_diff_percentage > 1:  # More than 1% difference is minor
+                consistency_issues.append(f"Minor count difference: PostgreSQL has {postgres_measurements}, ChromaDB has {chroma_measurements} ({count_diff_percentage:.1f}% difference)")
+                consistency_score -= 10
+
+            detailed_checks["count_consistency"]["details"] = f"PostgreSQL: {postgres_measurements}, ChromaDB: {chroma_measurements}, Difference: {count_diff_percentage:.1f}%"
+
+        # 2. Enhanced vector store searchability check
+        if vector_error:
+            consistency_issues.append(f"Vector store connectivity error: {vector_error}")
+            consistency_score -= 30
+            detailed_checks["vector_searchability"]["passed"] = False
+            detailed_checks["vector_searchability"]["details"] = f"Error: {vector_error}"
+        elif chroma_measurements > 0 and chroma_searchable == 0:
+            consistency_issues.append("ChromaDB has data but appears to have no searchable documents")
+            consistency_score -= 35
+            detailed_checks["vector_searchability"]["passed"] = False
+        elif chroma_measurements > 0:
+            # Calculate expected results based on what we requested
+            expected_min_results = min(50, max(10, chroma_measurements // 100))
+            if chroma_searchable < expected_min_results * 0.5:  # Got less than 50% of reasonable expected results
+                consistency_issues.append(f"ChromaDB search returns fewer results than expected: {chroma_searchable} found when requesting {expected_min_results}")
+                consistency_score -= 20
+                detailed_checks["vector_searchability"]["passed"] = False
+
+        detailed_checks["vector_searchability"]["details"] = f"Searchable: {chroma_searchable}, Total: {chroma_measurements}"
+
+        # 3. Enhanced sample data verification with comprehensive field matching
+        missing_in_vector = 0
+        hash_mismatches = 0
+        field_validation_issues = 0
+        
+        if postgres_sample:
+            check_sample_size = min(len(postgres_sample), max(5, len(postgres_sample) // 2))
+            
+            for i, row in enumerate(postgres_sample[:check_sample_size]):
+                try:
+                    # Safely construct search query with null checks
+                    float_id = str(row[0]) if row[0] is not None else "unknown"
+                    temperature = f"{float(row[5]):.2f}" if row[5] is not None else "null"
+                    salinity = f"{float(row[6]):.2f}" if row[6] is not None else "null"
+                    depth = f"{float(row[4]):.2f}" if row[4] is not None else "null"
+                    
+                    # First try direct hash-based lookup
+                    measurement_hash = row[8] if len(row) > 8 and row[8] else None
+                    found_by_hash = False
+                    
+                    if measurement_hash:
+                        try:
+                            hash_search = vector_store.collection.get(ids=[measurement_hash])
+                            if hash_search and hash_search.get('ids'):
+                                found_by_hash = True
+                        except Exception:
+                            pass
+                    
+                    # If hash lookup fails, try content-based search
+                    found_by_content = False
+                    if not found_by_hash:
+                        search_query = f"float {float_id} temperature {temperature} salinity {salinity} depth {depth}"
+                        search_result = vector_store.search(search_query, n_results=5)
+
+                        if search_result.get('metadatas'):
+                            for metadata in search_result['metadatas'][0]:
+                                if not metadata:
+                                    continue
+                                
+                                # Enhanced matching with multiple field validation
+                                matches = 0
+                                total_checks = 0
+                                
+                                # Float ID match
+                                if metadata.get('float_id') == row[0]:
+                                    matches += 1
+                                total_checks += 1
+                                
+                                # Temperature match (with tolerance)
+                                if row[5] is not None and metadata.get('temperature') is not None:
+                                    try:
+                                        temp_diff = abs(float(metadata.get('temperature')) - float(row[5]))
+                                        if temp_diff < 0.01:  # Tighter tolerance
+                                            matches += 1
+                                    except (ValueError, TypeError):
+                                        pass
+                                    total_checks += 1
+                                
+                                # Salinity match (with tolerance)
+                                if row[6] is not None and metadata.get('salinity') is not None:
+                                    try:
+                                        sal_diff = abs(float(metadata.get('salinity')) - float(row[6]))
+                                        if sal_diff < 0.01:  # Tighter tolerance
+                                            matches += 1
+                                    except (ValueError, TypeError):
+                                        pass
+                                    total_checks += 1
+                                
+                                # Depth match (with tolerance)
+                                if row[4] is not None and metadata.get('depth') is not None:
+                                    try:
+                                        depth_diff = abs(float(metadata.get('depth')) - float(row[4]))
+                                        if depth_diff < 0.1:
+                                            matches += 1
+                                    except (ValueError, TypeError):
+                                        pass
+                                    total_checks += 1
+                                
+                                # Consider it a match if at least 75% of fields match
+                                if total_checks > 0 and (matches / total_checks) >= 0.75:
+                                    found_by_content = True
+                                    break
+
+                    if not found_by_hash and not found_by_content:
+                        missing_in_vector += 1
+                    elif not found_by_hash and measurement_hash:
+                        hash_mismatches += 1
+                        
+                except Exception as e:
+                    missing_in_vector += 1
+                    field_validation_issues += 1
+
+            # Calculate consistency based on sample results
+            sample_loss_percentage = (missing_in_vector / check_sample_size) * 100 if check_sample_size > 0 else 0
+            
+            if sample_loss_percentage > 50:  # More than 50% missing is critical
+                consistency_issues.append(f"Critical data loss: {missing_in_vector}/{check_sample_size} recent measurements not found in vector store ({sample_loss_percentage:.1f}%)")
+                consistency_score -= 35
+                detailed_checks["sample_verification"]["passed"] = False
+            elif sample_loss_percentage > 20:  # More than 20% missing is significant
+                consistency_issues.append(f"Significant data loss: {missing_in_vector}/{check_sample_size} recent measurements not found in vector store ({sample_loss_percentage:.1f}%)")
+                consistency_score -= 25
+                detailed_checks["sample_verification"]["passed"] = False
+            elif missing_in_vector > 0:
+                consistency_issues.append(f"Minor data inconsistency: {missing_in_vector}/{check_sample_size} recent measurements not found in vector store ({sample_loss_percentage:.1f}%)")
+                consistency_score -= 10
+
+            # Hash consistency issues
+            if hash_mismatches > 0:
+                consistency_issues.append(f"Hash consistency issues: {hash_mismatches}/{check_sample_size} measurements found by content but not by hash")
+                consistency_score -= 15
+                detailed_checks["hash_consistency"]["passed"] = False
+
+            # Field validation issues
+            if field_validation_issues > 0:
+                consistency_issues.append(f"Data validation issues: {field_validation_issues}/{check_sample_size} measurements had field validation errors")
+                consistency_score -= 10
+
+            detailed_checks["sample_verification"]["details"] = f"Checked: {check_sample_size}, Missing: {missing_in_vector}, Hash mismatches: {hash_mismatches}, Field issues: {field_validation_issues}"
+
+        # 4. Enhanced file upload consistency with data completeness check
+        try:
+            total_measurements_from_files = db.execute(text(
+                "SELECT COALESCE(SUM(measurements_count), 0) FROM uploaded_files"
+            )).fetchone()[0]
+
+            # Check for data completeness
+            null_data_count = db.execute(text("""
+                SELECT COUNT(*) FROM argo_measurements 
+                WHERE temperature IS NULL OR salinity IS NULL OR depth IS NULL
+            """)).fetchone()[0]
+
+            file_consistency_diff = abs(total_measurements_from_files - postgres_measurements)
+            file_consistency_percentage = (file_consistency_diff / max(postgres_measurements, 1)) * 100
+
+            if file_consistency_percentage > 5:
+                consistency_issues.append(f"File upload records inconsistent: Files report {total_measurements_from_files} measurements, but database has {postgres_measurements} ({file_consistency_percentage:.1f}% difference)")
+                consistency_score -= 20
+                detailed_checks["file_consistency"]["passed"] = False
+
+            # Data completeness check
+            if postgres_measurements > 0:
+                null_percentage = (null_data_count / postgres_measurements) * 100
+                if null_percentage > 10:
+                    consistency_issues.append(f"High null data rate: {null_data_count}/{postgres_measurements} measurements ({null_percentage:.1f}%) have missing critical data")
+                    consistency_score -= 15
+                    detailed_checks["data_completeness"]["passed"] = False
+                elif null_percentage > 5:
+                    consistency_issues.append(f"Moderate null data rate: {null_data_count}/{postgres_measurements} measurements ({null_percentage:.1f}%) have missing critical data")
+                    consistency_score -= 8
+
+            detailed_checks["file_consistency"]["details"] = f"Files report: {total_measurements_from_files}, DB has: {postgres_measurements}, Null data: {null_data_count}"
+
+        except Exception as e:
+            consistency_issues.append(f"File consistency check failed: {str(e)}")
+            consistency_score -= 15
+            detailed_checks["file_consistency"]["passed"] = False
+
+        # Determine overall status with enhanced thresholds
+        if consistency_score >= 95:
+            overall_status = "excellent"
+        elif consistency_score >= 85:
+            overall_status = "good"
+        elif consistency_score >= 70:
+            overall_status = "acceptable"
+        elif consistency_score >= 50:
+            overall_status = "concerning"
+        else:
+            overall_status = "critical"
+
+        # Enhanced recommendations based on specific issues
+        recommendations = []
+        if any(not check["passed"] for check in detailed_checks.values()):
+            if not detailed_checks["count_consistency"]["passed"]:
+                recommendations.append("Re-sync data between PostgreSQL and ChromaDB to resolve count differences")
+            if not detailed_checks["vector_searchability"]["passed"]:
+                recommendations.append("Rebuild vector store indexes to restore search functionality")
+            if not detailed_checks["sample_verification"]["passed"]:
+                recommendations.append("Investigate recent data ingestion process for consistency issues")
+            if not detailed_checks["hash_consistency"]["passed"]:
+                recommendations.append("Validate hash generation consistency between database and vector store")
+            if not detailed_checks["file_consistency"]["passed"]:
+                recommendations.append("Audit file upload tracking and measurement counting processes")
+            if not detailed_checks["data_completeness"]["passed"]:
+                recommendations.append("Review data validation rules and improve null data handling")
+        
+        if consistency_score < 80:
+            recommendations.append("Run full database reinitialization to fix multiple consistency issues")
+        if not detailed_checks["vector_searchability"]["passed"]:
+            recommendations.append("Check vector store search functionality and embedding quality")
+        if postgres_measurements > 10000 and len(postgres_sample) < 20:
+            recommendations.append("Increase sample size for large datasets to improve validation accuracy")
+
+        return {
+            "overall_status": overall_status,
+            "consistency_score": consistency_score,
+            "consistency_issues": consistency_issues,
+            "recommendations": recommendations,
+            "detailed_analysis": {
+                "postgresql": {
+                    "total_measurements": postgres_measurements,
+                    "unique_floats": postgres_unique_floats,
+                    "uploaded_files": postgres_files,
+                    "sample_data_count": len(postgres_sample),
+                    "sample_size_used": sample_size
+                },
+                "chromadb": {
+                    "total_measurements": chroma_measurements,
+                    "searchable_results": chroma_searchable,
+                    "vector_store_error": vector_error,
+                    "collection_stats": vector_stats
+                },
+                "consistency_checks": detailed_checks,
+                "validation_metrics": {
+                    "sample_size_used": len(postgres_sample) if postgres_sample else 0,
+                    "missing_in_vector_store": missing_in_vector,
+                    "hash_mismatches": hash_mismatches,
+                    "field_validation_issues": field_validation_issues,
+                    "count_difference": abs(postgres_measurements - chroma_measurements),
+                    "count_difference_percentage": round((abs(postgres_measurements - chroma_measurements) / max(postgres_measurements, 1)) * 100, 2),
+                    "file_upload_consistency": total_measurements_from_files == postgres_measurements
+                }
+            },
+            "test_timestamp": time.time(),
+            "enhanced_validation": True
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to check data consistency: {str(e)}")
+
 @app.post("/admin/reinitialize")
 def reinitialize_connections():
     """Reinitialize database connections and clear caches (admin only)"""
@@ -1057,10 +1186,10 @@ def reinitialize_connections():
     try:
         # Reinitialize vector store to pick up any external database changes
         vector_store.reinitialize()
-        
+
         # Get fresh stats
         vector_stats = vector_store.get_collection_stats()
-        
+
         return {
             "message": "Connections reinitialized successfully.",
             "vector_store": vector_stats,

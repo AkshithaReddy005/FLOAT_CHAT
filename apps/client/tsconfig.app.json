@@ -21,7 +21,12 @@
     "noUnusedParameters": true,
     "erasableSyntaxOnly": true,
     "noFallthroughCasesInSwitch": true,
-    "noUncheckedSideEffectImports": true
+    "noUncheckedSideEffectImports": true,
+    "ignoreDeprecations": "5.0"
   },
-  "include": ["src"]
+  "include": ["src"],
+  "compilerDiagnostics": {
+    "error": ["noUnusedLocals", "noUnusedParameters"],
+    "warning": ["noImplicitAny"]
+  },
 }

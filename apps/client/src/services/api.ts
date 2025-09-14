@@ -28,7 +28,7 @@ class ApiService {
   async uploadFile(file: File): Promise<UploadResponse> {
     const formData = new FormData();
     formData.append('file', file);
-    
+
     return this.makeRequest<UploadResponse>('/admin/upload', {
       method: 'POST',
       body: formData,
@@ -106,6 +106,18 @@ class ApiService {
 
   async testRAGBalance(): Promise<any> {
     return this.makeRequest<any>('/admin/rag-balance-test', {
+      method: 'GET',
+    });
+  }
+
+  async getUploadedFiles(skip: number = 0, limit: number = 100): Promise<any> {
+    return this.makeRequest<any>(`/admin/files?skip=${skip}&limit=${limit}`, {
+      method: 'GET',
+    });
+  }
+
+  async checkDataConsistency(): Promise<any> {
+    return this.makeRequest<any>('/admin/data-consistency-check', {
       method: 'GET',
     });
   }

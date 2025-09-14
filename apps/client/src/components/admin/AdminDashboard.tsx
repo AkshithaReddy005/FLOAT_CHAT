@@ -2,6 +2,8 @@ import { useState, useEffect } from 'react';
 import { Layout } from '../common/Layout';
 import { FileUpload } from './FileUpload';
 import { KnowledgeBaseDetails } from './KnowledgeBaseDetails';
+import { FileListModal } from './FileListModal';
+import { DataConsistencyChecker } from './DataConsistencyChecker';
 import { useUpload } from '../../hooks/useUpload';
 import { apiService } from '../../services/api';
 import { Button } from '../common/Button';
@@ -29,6 +31,8 @@ export const AdminDashboard = () => {
   const [showClearConfirm, setShowClearConfirm] = useState(false);
   const [statsLoading, setStatsLoading] = useState(false);
   const [showKnowledgeBaseDetails, setShowKnowledgeBaseDetails] = useState(false);
+  const [showFileList, setShowFileList] = useState(false);
+  const [showDataConsistencyChecker, setShowDataConsistencyChecker] = useState(false);
 
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -65,8 +69,8 @@ export const AdminDashboard = () => {
         setClearStatus('');
       }, 5000);
       
-    } catch (error: any) {
-      setClearStatus(`Failed to clear databases: ${error.message}`);
+    } catch (error: unknown) {
+      setClearStatus(`Failed to clear databases: ${error instanceof Error ? error.message : 'Unknown error'}`);
       setTimeout(() => {
         setClearStatus('');
       }, 10000);
@@ -105,6 +109,14 @@ export const AdminDashboard = () => {
                 {statsLoading ? 'Refreshing...' : 'Refresh Stats'}
               </Button>
               
+              <Button
+                onClick={() => setShowDataConsistencyChecker(true)}
+                variant="secondary"
+                className="text-sm"
+              >
+                Check Data Consistency
+              </Button>
+
               <Button
                 onClick={() => setShowClearConfirm(true)}
                 disabled={isClearingDatabases}
@@ -187,7 +199,16 @@ export const AdminDashboard = () => {
 
           {stats?.latest_upload && (
             <div className="mt-6 pt-6 border-t border-slate-200">
-              <h3 className="text-sm font-semibold text-slate-700 mb-3">Latest Upload</h3>
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="text-sm font-semibold text-slate-700">Latest Upload</h3>
+                <Button
+                  onClick={() => setShowFileList(true)}
+                  variant="secondary"
+                  className="text-xs px-3 py-1"
+                >
+                  View All Files
+                </Button>
+              </div>
               <div className="bg-slate-50 rounded-xl p-4">
                 <div className="flex items-center justify-between">
                   <div>
@@ -221,10 +242,13 @@ export const AdminDashboard = () => {
 
         {/* File Upload Section */}
         <div className="bg-white rounded-2xl shadow-lg p-6">
-          <h2 className="text-xl font-bold text-slate-800 mb-6">Upload NetCDF Files</h2>
-          <FileUpload 
-            onFileChange={handleFileChange} 
-            status={status} 
+          <div className="flex items-center justify-between mb-6">
+            <h2 className="text-xl font-bold text-slate-800">Upload NetCDF Files</h2>
+          </div>
+
+          <FileUpload
+            onFileChange={handleFileChange}
+            status={status}
             uploadDetails={uploadDetails}
             isUploading={isUploading}
           />
@@ -284,6 +308,16 @@ export const AdminDashboard = () => {
         {/* Knowledge Base Details Modal */}
         {showKnowledgeBaseDetails && (
           <KnowledgeBaseDetails onClose={() => setShowKnowledgeBaseDetails(false)} />
+        )}
+
+        {/* File List Modal */}
+        {showFileList && (
+          <FileListModal onClose={() => setShowFileList(false)} />
+        )}
+
+        {/* Data Consistency Checker Modal */}
+        {showDataConsistencyChecker && (
+          <DataConsistencyChecker onClose={() => setShowDataConsistencyChecker(false)} />
         )}
       </div>
     </Layout>
