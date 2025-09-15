@@ -6,7 +6,7 @@ Generates SQL queries from natural language using LLM or rule-based approaches.
 import os
 import re
 from typing import Dict, List, Optional
-from datetime import datetime
+from datetime import datetime, timedelta
 from dotenv import load_dotenv
 
 # Try to import Google Generative AI
@@ -245,13 +245,20 @@ Generate ONLY the SQL query (no explanation or markdown):"""
         
         # Temporal filter
         if parameter_context.date_years:
-            # Year comparison logic
-            year_conditions = [f"(date >= '{year}-01-01' AND date <= '{year}-12-31')" for year in parameter_context.date_years]
+            # Year comparison logic using half-open intervals [start, end)
+            year_conditions = [
+                f"(date >= '{year}-01-01' AND date < '{year + 1}-01-01')" for year in parameter_context.date_years
+            ]
             where_conditions.append(f"({' OR '.join(year_conditions)})")
         elif parameter_context.date_range:
             start_date, end_date = parameter_context.date_range
+            # Use half-open interval [start, end_next) to include the full end day
+            try:
+                end_exclusive = (end_date + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+            except Exception:
+                end_exclusive = end_date
             where_conditions.append(f"date >= '{start_date.isoformat()}'")
-            where_conditions.append(f"date <= '{end_date.isoformat()}'")
+            where_conditions.append(f"date < '{end_exclusive.isoformat()}'")
         
         # Depth filter
         if parameter_context.depth_range:
