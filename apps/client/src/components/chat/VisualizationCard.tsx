@@ -27,18 +27,19 @@ export const VisualizationCard: React.FC<VisualizationCardProps> = ({
   const vizReasoning = chatResponse?.visualization?.reasoning || '';
   const chartRecommendations = chatResponse?.visualization?.chart_recommendations || [];
 
-  // Helper function to check if data is real/meaningful
+  // Helper function to check if data is real/meaningful - FIXED: Handle null values properly
   const isRealData = (data: ArgoMeasurement[]) => {
     return data.some(item => {
-      // Check if data has real values (not all zeros/nulls)
+      // Check if data has real coordinates (not all zeros/nulls)
       const hasRealCoords = item.latitude !== 0 && item.longitude !== 0 && 
                           item.latitude != null && item.longitude != null;
-      const hasRealMeasurements = (item.temperature !== 0 && item.temperature != null) ||
-                                (item.salinity !== 0 && item.salinity != null) ||
-                                (item.depth !== 0 && item.depth != null);
-      const hasValidFloatId = item.float_id && item.float_id !== '';
+      // Check if data has meaningful measurements (null is OK for filtered results)
+      const hasRealMeasurements = (item.temperature != null && item.temperature !== 0) ||
+                                (item.salinity != null && item.salinity !== 0) ||
+                                (item.depth != null && item.depth !== 0);
+      const hasValidFloatId = item.float_id && item.float_id !== '' && !item.float_id.startsWith('float_');
       
-      return hasRealCoords && hasRealMeasurements && hasValidFloatId;
+      return hasRealCoords && (hasRealMeasurements || item.temperature != null || item.salinity != null) && hasValidFloatId;
     });
   };
 

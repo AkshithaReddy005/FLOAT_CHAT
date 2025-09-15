@@ -7,7 +7,9 @@ import re
 import uuid
 import os
 from typing import Dict, List, Optional, Tuple, Any
-from datetime import datetime
+from datetime import datetime, timedelta
+import calendar
+import difflib
 from .parameter_context import ParameterContext
 from .param_extractors.llm_extractor import LLMParameterExtractor
 from .param_extractors.region_resolver import RegionResolver
@@ -64,11 +66,12 @@ class UnifiedQueryParser:
         # Force heuristic extraction for queries with clear threshold keywords
         # to bypass potential LLM failures on these specific patterns.
         query_lower = user_query.lower()
-        threshold_keywords = ["above", "below", "greater", "less", ">", "<", "under", "over"]
+        threshold_keywords = ["above", "below", "greater", "less", ">", "<", ">=", "<=", "under", "over"]
         strategy = self.extraction_strategy
 
-        if strategy == "llm_first" and any(keyword in query_lower for keyword in threshold_keywords):
-            print(f"DEBUG: Threshold keyword detected. Forcing heuristic extraction for query: '{user_query}'")
+        # Use typo-tolerant detection for threshold keywords
+        if strategy == "llm_first" and self._contains_threshold_keyword(query_lower, threshold_keywords):
+            print(f"DEBUG: Threshold keyword (typo-tolerant) detected. Forcing heuristic extraction for query: '{user_query}'")
             strategy = "heuristic_only"
         
         # Strategy-based extraction
@@ -104,6 +107,32 @@ class UnifiedQueryParser:
             extraction_method=extracted.get("extraction_method", "unknown"),
             confidence_score=extracted.get("confidence_score", 0.5)
         )
+
+    def _contains_threshold_keyword(self, query_lower: str, keywords: List[str]) -> bool:
+        """Detect threshold keywords with tolerance to common typos.
+        - Directly checks for symbol operators like >, <, >=, <=
+        - For word keywords, uses difflib to allow minor misspellings
+        """
+        # Direct symbol check first
+        if any(sym in query_lower for sym in [">=", "<=", ">", "<"]):
+            return True
+
+        # Tokenize on non-letters to compare words
+        tokens = re.split(r"[^a-zA-Z]+", query_lower)
+        word_keywords = [k for k in keywords if k.isalpha()]
+
+        # Quick exact match
+        if any(tok in word_keywords for tok in tokens if tok):
+            return True
+
+        # Fuzzy match: allow close matches (similarity >= 0.8)
+        for tok in tokens:
+            if not tok:
+                continue
+            matches = difflib.get_close_matches(tok, word_keywords, n=1, cutoff=0.8)
+            if matches:
+                return True
+        return False
     
     def _extract_with_llm_first(self, user_query: str, session_context: Optional[Dict]) -> Dict:
         """Extract using LLM first, fallback to heuristics"""
@@ -268,53 +297,165 @@ class UnifiedQueryParser:
     
     def _extract_temporal(self, query_lower: str) -> Tuple[Optional[Tuple[datetime, datetime]], Optional[List[int]], Optional[str]]:
         """Extract temporal parameters with comprehensive pattern matching"""
-        
-        # Year comparison patterns (highest priority)
+        now = datetime.now()
+
+        # Helper: month name mapping
+        month_map = {m.lower(): i for i, m in enumerate(calendar.month_name) if m}
+        month_map.update({m.lower(): i for i, m in enumerate(calendar.month_abbr) if m})
+
+        def month_num(s: str) -> Optional[int]:
+            return month_map.get(s[:3].lower()) if s else None
+
+        def start_of_month(year: int, month: int) -> datetime:
+            return datetime(year, month, 1)
+
+        def end_of_month_exclusive(year: int, month: int) -> datetime:
+            # Return first day of next month (exclusive bound)
+            if month == 12:
+                return datetime(year + 1, 1, 1)
+            return datetime(year, month + 1, 1)
+
+        def add_months(dt: datetime, months: int) -> datetime:
+            y = dt.year + (dt.month - 1 + months) // 12
+            m = (dt.month - 1 + months) % 12 + 1
+            d = min(dt.day, calendar.monthrange(y, m)[1])
+            return datetime(y, m, d)
+
+        # 1) Year comparisons (highest priority)
         comparison_patterns = [
             r"(?:comparison|compare|comparing)?\s*([12][09][0-9]{2})\s*(?:and|vs|versus)\s*([12][09][0-9]{2})",
             r"between\s+([12][09][0-9]{2})\s+and\s+([12][09][0-9]{2})",
             r"compare.*?([12][09][0-9]{2}).*?([12][09][0-9]{2})",
         ]
-        
         for pattern in comparison_patterns:
             match = re.search(pattern, query_lower)
             if match:
                 year1, year2 = map(int, match.groups())
                 return None, [year1, year2], "comparison"
-        
-        # Date range patterns
+
+        # 2) Absolute year ranges
         range_patterns = [
             r"from\s+([12][09][0-9]{2})\s+to\s+([12][09][0-9]{2})",
             r"([12][09][0-9]{2})\s*-\s*([12][09][0-9]{2})",
         ]
-        
         for pattern in range_patterns:
             match = re.search(pattern, query_lower)
             if match:
                 year1, year2 = map(int, match.groups())
                 start_year = min(year1, year2)
                 end_year = max(year1, year2)
-                date_range = (datetime(start_year, 1, 1), datetime(end_year, 12, 31))
-                return date_range, None, "range"
-        
-        # Single year patterns
+                return (datetime(start_year, 1, 1), datetime(end_year, 12, 31)), None, "range"
+
+        # 3) Single year
         single_year_patterns = [
             r"(?:in|for|during)\s+([12][09][0-9]{2})",
             r"year\s+([12][09][0-9]{2})",
+            r"\b([12][09][0-9]{2})\b",
         ]
-        
         for pattern in single_year_patterns:
             match = re.search(pattern, query_lower)
             if match:
                 year = int(match.group(1))
-                date_range = (datetime(year, 1, 1), datetime(year, 12, 31))
-                return date_range, None, "single_year"
-        
-        # Specific month patterns
+                return (datetime(year, 1, 1), datetime(year, 12, 31)), None, "single_year"
+
+        # 4) Month with year: "March 2023", "Mar 2023"
+        m = re.search(r"\b([a-zA-Z]{3,9})\s+([12][09][0-9]{2})\b", query_lower)
+        if m:
+            mon, yr = m.group(1), int(m.group(2))
+            mn = month_num(mon)
+            if mn:
+                return (start_of_month(yr, mn), end_of_month_exclusive(yr, mn)), None, "month"
+
+        # 5) Month range possibly across years: "Jan 2022 to Mar 2023"
+        m2 = re.search(r"\b([a-zA-Z]{3,9})\s+([12][09][0-9]{2})\s*(?:to|-)\s*([a-zA-Z]{3,9})\s+([12][09][0-9]{2})\b", query_lower)
+        if m2:
+            m1s, y1s, m2s, y2s = m2.groups()
+            y1, y2 = int(y1s), int(y2s)
+            mn1, mn2 = month_num(m1s), month_num(m2s)
+            if mn1 and mn2:
+                start = start_of_month(y1, mn1)
+                end_excl = end_of_month_exclusive(y2, mn2)
+                return (start, end_excl - timedelta(days=1)), None, "month_range"
+
+        # 6) Quarter handling: Q1 2023, first quarter 2023
+        q = re.search(r"\bq([1-4])\s+([12][09][0-9]{2})\b", query_lower)
+        if q:
+            qn, yr = int(q.group(1)), int(q.group(2))
+            start_month = (qn - 1) * 3 + 1
+            start = start_of_month(yr, start_month)
+            end_excl = end_of_month_exclusive(yr, start_month + 2)
+            return (start, end_excl - timedelta(days=1)), None, "quarter"
+        q2 = re.search(r"\b(first|second|third|fourth)\s+quarter\s+([12][09][0-9]{2})\b", query_lower)
+        if q2:
+            qname, yr = q2.group(1), int(q2.group(2))
+            qmap = {"first": 1, "second": 2, "third": 3, "fourth": 4}
+            qn = qmap.get(qname)
+            if qn:
+                start_month = (qn - 1) * 3 + 1
+                start = start_of_month(yr, start_month)
+                end_excl = end_of_month_exclusive(yr, start_month + 2)
+                return (start, end_excl - timedelta(days=1)), None, "quarter"
+
+        # 7) Relative ranges
+        # this year / last year
+        if re.search(r"\bthis\s+year\b", query_lower):
+            start = datetime(now.year, 1, 1)
+            end = datetime(now.year, 12, 31)
+            return (start, end), None, "relative"
+        if re.search(r"\blast\s+year\b", query_lower):
+            start = datetime(now.year - 1, 1, 1)
+            end = datetime(now.year - 1, 12, 31)
+            return (start, end), None, "relative"
+
+        # this month / last month
+        if re.search(r"\bthis\s+month\b", query_lower):
+            start = start_of_month(now.year, now.month)
+            end_excl = end_of_month_exclusive(now.year, now.month)
+            return (start, end_excl - timedelta(days=1)), None, "relative"
+        if re.search(r"\blast\s+month\b", query_lower):
+            last_m = add_months(now, -1)
+            start = start_of_month(last_m.year, last_m.month)
+            end_excl = end_of_month_exclusive(last_m.year, last_m.month)
+            return (start, end_excl - timedelta(days=1)), None, "relative"
+
+        # last N months / past N months
+        m_rel = re.search(r"\b(last|past)\s+(\d+)\s+months?\b", query_lower)
+        if m_rel:
+            n = int(m_rel.group(2))
+            start = add_months(now.replace(day=1), -n)
+            end = now
+            return (start, end), None, "relative"
+
+        # last N days
+        d_rel = re.search(r"\b(last|past)\s+(\d+)\s+days?\b", query_lower)
+        if d_rel:
+            n = int(d_rel.group(2))
+            start = now - timedelta(days=n)
+            end = now
+            return (start, end), None, "relative"
+
+        # since/until/before/after year
+        since_y = re.search(r"\bsince\s+([12][09][0-9]{2})\b", query_lower)
+        if since_y:
+            y = int(since_y.group(1))
+            return (datetime(y, 1, 1), now), None, "relative"
+
+        after_y = re.search(r"\bafter\s+([12][09][0-9]{2})\b", query_lower)
+        if after_y:
+            y = int(after_y.group(1))
+            return (datetime(y + 1, 1, 1), now), None, "relative"
+
+        before_y = re.search(r"\b(before|until)\s+([12][09][0-9]{2})\b", query_lower)
+        if before_y:
+            y = int(before_y.group(2))
+            # up to start of that year
+            return (datetime(1900, 1, 1), datetime(y, 1, 1)), None, "relative"
+
+        # Specific existing special case retained as fallback example
         if "march" in query_lower and "2023" in query_lower:
             date_range = (datetime(2023, 3, 1), datetime(2023, 4, 1))
             return date_range, None, "specific_month"
-        
+
         return None, None, None
     
     def _extract_depth(self, query_lower: str, session_context: Optional[Dict] = None) -> Tuple[Optional[Tuple[Any, Any]], Optional[str]]:
