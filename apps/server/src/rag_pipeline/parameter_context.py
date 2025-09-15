@@ -38,7 +38,9 @@ class ParameterContext:
     # Data parameters
     float_ids: Optional[List[str]] = None
     parameters: Optional[List[str]] = None  # ['temperature', 'salinity', 'pressure']
-    
+    temperature_range: Optional[Tuple[str, float]] = None  # e.g., ('<', 20.0) for temperature < 20°C
+    salinity_range: Optional[Tuple[str, float]] = None    # e.g., ('>', 35.0) for salinity > 35
+
     # Query characteristics
     is_analytical: bool = False
     is_comparative: bool = False
@@ -90,7 +92,15 @@ class ParameterContext:
             filters['float_ids'] = self.float_ids
         if self.parameters:
             filters['parameters'] = self.parameters
-        
+
+        # Parameter threshold filters - FIXED: Add to SQL filters
+        if self.temperature_range:
+            operator, value = self.temperature_range
+            filters['temperature_threshold'] = {'operator': operator, 'value': value}
+        if self.salinity_range:
+            operator, value = self.salinity_range
+            filters['salinity_threshold'] = {'operator': operator, 'value': value}
+
         return filters
     
     def to_chroma_filters(self) -> Dict[str, Any]:
@@ -156,7 +166,47 @@ class ParameterContext:
                 filters['$and'].append(float_filter)
             else:
                 filters.update(float_filter)
-        
+
+        # Temperature threshold filters - FIXED: Add to ChromaDB filters
+        if self.temperature_range:
+            operator, value = self.temperature_range
+            if operator == '<':
+                temp_filter = {'temperature': {'$lt': value}}
+            elif operator == '>':
+                temp_filter = {'temperature': {'$gt': value}}
+            elif operator == '<=':
+                temp_filter = {'temperature': {'$lte': value}}
+            elif operator == '>=':
+                temp_filter = {'temperature': {'$gte': value}}
+            else:
+                temp_filter = None
+
+            if temp_filter:
+                if '$and' in filters:
+                    filters['$and'].append(temp_filter)
+                else:
+                    filters.update(temp_filter)
+
+        # Salinity threshold filters - FIXED: Add to ChromaDB filters
+        if self.salinity_range:
+            operator, value = self.salinity_range
+            if operator == '<':
+                sal_filter = {'salinity': {'$lt': value}}
+            elif operator == '>':
+                sal_filter = {'salinity': {'$gt': value}}
+            elif operator == '<=':
+                sal_filter = {'salinity': {'$lte': value}}
+            elif operator == '>=':
+                sal_filter = {'salinity': {'$gte': value}}
+            else:
+                sal_filter = None
+
+            if sal_filter:
+                if '$and' in filters:
+                    filters['$and'].append(sal_filter)
+                else:
+                    filters.update(sal_filter)
+
         return filters
     
     def get_summary(self) -> str:
@@ -188,13 +238,23 @@ class ParameterContext:
         
         if self.parameters:
             parts.append(f"Parameters: {', '.join(self.parameters)}")
-        
+
+        # Add temperature threshold to summary - FIXED
+        if self.temperature_range:
+            operator, value = self.temperature_range
+            parts.append(f"Temperature {operator} {value}°C")
+
+        # Add salinity threshold to summary - FIXED
+        if self.salinity_range:
+            operator, value = self.salinity_range
+            parts.append(f"Salinity {operator} {value}")
+
         if self.float_ids:
             if len(self.float_ids) == 1:
                 parts.append(f"Float: {self.float_ids[0]}")
             else:
                 parts.append(f"Floats: {len(self.float_ids)} selected")
-        
+
         return " | ".join(parts) if parts else "No specific filters"
     
     def validate_consistency(self, data_results: List[Dict]) -> Tuple[bool, List[str]]:
@@ -259,15 +319,77 @@ class ParameterContext:
                     elif operator == '<=' and depth > value:
                         violations.append(f"Record {i}: depth {depth}m violates {operator} {value}m")
         
+        # Check temperature threshold consistency - FIXED
+        if self.temperature_range:
+            operator, value = self.temperature_range
+            for i, record in enumerate(data_results[:10]):
+                temperature = record.get('temperature')
+                if temperature is not None:
+                    if operator == '<' and temperature >= value:
+                        violations.append(f"Record {i}: temperature {temperature}°C violates < {value}°C")
+                    elif operator == '>' and temperature <= value:
+                        violations.append(f"Record {i}: temperature {temperature}°C violates > {value}°C")
+                    elif operator == '<=' and temperature > value:
+                        violations.append(f"Record {i}: temperature {temperature}°C violates <= {value}°C")
+                    elif operator == '>=' and temperature < value:
+                        violations.append(f"Record {i}: temperature {temperature}°C violates >= {value}°C")
+
+        # Check salinity threshold consistency - FIXED
+        if self.salinity_range:
+            operator, value = self.salinity_range
+            for i, record in enumerate(data_results[:10]):
+                salinity = record.get('salinity')
+                if salinity is not None:
+                    if operator == '<' and salinity >= value:
+                        violations.append(f"Record {i}: salinity {salinity} violates < {value}")
+                    elif operator == '>' and salinity <= value:
+                        violations.append(f"Record {i}: salinity {salinity} violates > {value}")
+                    elif operator == '<=' and salinity > value:
+                        violations.append(f"Record {i}: salinity {salinity} violates <= {value}")
+                    elif operator == '>=' and salinity < value:
+                        violations.append(f"Record {i}: salinity {salinity} violates >= {value}")
+
         # Check float ID consistency
         if self.float_ids:
             for i, record in enumerate(data_results[:10]):
                 float_id = record.get('float_id')
                 if float_id and float_id not in self.float_ids:
                     violations.append(f"Record {i}: float_id {float_id} not in requested list")
-        
+
         return len(violations) == 0, violations
-    
+
+    @property
+    def needs_data(self) -> bool:
+        """Check if the query needs data (has filters or is asking for data)"""
+        # If any specific filters are set, it needs data
+        if (self.location_bounds or self.date_range or self.date_years or
+            self.depth_range or self.float_ids or self.parameters or
+            self.temperature_range or self.salinity_range):  # FIXED: Include threshold filters
+            return True
+
+        # Check if query is asking for general data exploration
+        query_lower = self.original_query.lower()
+        data_request_patterns = [
+            'knowledge base', 'what data', 'all data', 'available data',
+            'show me', 'give me', 'find', 'data you have', 'measurements',
+            'what do you have', 'what information', 'database', 'dataset'
+        ]
+
+        return any(pattern in query_lower for pattern in data_request_patterns)
+
+    @property
+    def is_full_data_request(self) -> bool:
+        """Check if the query is asking for full knowledge base or all available data"""
+        query_lower = self.original_query.lower()
+        full_data_patterns = [
+            'knowledge base', 'all data', 'full data', 'entire data', 'complete data',
+            'everything', 'all available', 'what data you have', 'all measurements',
+            'entire knowledge', 'full knowledge', 'complete knowledge', 'database',
+            'all information', 'everything available'
+        ]
+
+        return any(pattern in query_lower for pattern in full_data_patterns)
+
     def to_dict(self) -> Dict:
         """Convert to dictionary for logging/serialization"""
         result = {}

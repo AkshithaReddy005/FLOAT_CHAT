@@ -3,12 +3,14 @@ Enhanced Chatbot Service with Modular RAG Implementation
 Uses separated modules for query classification, SQL generation, visualization, and RAG responses.
 """
 
-from typing import Dict, List
+from typing import Dict, List, Tuple, Optional
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 from dotenv import load_dotenv
 
 from database.database import ArgoMeasurement
+from analysis.oceanographic_intelligence import OceanographicIntelligence, AnalysisResult
+from analysis.query_intelligence import QueryIntelligence, QueryEnhancement
 from rag_pipeline.vector_store import VectorStore
 from rag_pipeline.query_classifier import QueryClassifier
 from rag_pipeline.sql_generator import SQLGenerator
@@ -40,15 +42,31 @@ class ChatbotService:
         
         # Initialize new unified components
         self.consistency_validator = ConsistencyValidator()
-        
-        print("Enhanced Chatbot Service initialized with unified parameter flow")
+
+        # Initialize intelligent analysis engines
+        try:
+            self.oceanographic_intelligence = OceanographicIntelligence()
+            self.query_intelligence = QueryIntelligence()
+            print("Enhanced Chatbot Service initialized with intelligent analysis capabilities")
+        except ImportError as e:
+            print(f"Warning: Advanced analysis libraries not available: {e}")
+            self.oceanographic_intelligence = None
+            self.query_intelligence = None
+            print("Enhanced Chatbot Service initialized with basic capabilities")
     
     async def process_chat_query(self, user_query: str, db: Session, session_context: dict = None) -> Dict:
-        """Process a natural language query using unified parameter flow"""
-        
+        """Process a natural language query using intelligent analysis"""
+
         start_time = time.time()
         timing_data = {}
-        
+
+        # Step 1: Intelligent Query Enhancement
+        if self.query_intelligence:
+            query_enhancement = self.query_intelligence.enhance_query(user_query)
+            print(f"Query Intelligence: Intent={query_enhancement.intent}, Complexity={query_enhancement.complexity_level}")
+        else:
+            query_enhancement = None
+
         # Initialize pipeline flow tracking
         pipeline_flow = {
             "total_duration": "0.000s",
@@ -102,9 +120,22 @@ class ChatbotService:
             return await self.create_fallback_response(user_query, db)
         
         try:
-            # Step 3: Retrieve context using unified parameter context
+            # Step 3: Retrieve comprehensive context using unified parameter context
             context_start = time.time()
-            context_results = self.vector_store.search_with_context(parameter_context, n_results=25)
+
+            # Dynamically determine context size based on query complexity and expected data volume
+            base_context_size = 25
+            if parameter_context.complexity_level == "complex":
+                context_size = 75  # More context for complex queries
+            elif parameter_context.is_full_data_request:
+                context_size = 100  # Comprehensive context for full data requests
+            elif parameter_context.is_analytical:
+                context_size = 50  # Enhanced context for analytical queries
+            else:
+                context_size = base_context_size
+
+            print(f"Requesting {context_size} context documents for query complexity: {parameter_context.complexity_level}")
+            context_results = self.vector_store.search_with_context(parameter_context, n_results=context_size)
             step_time = time.time() - context_start
             timing_data['context_retrieval'] = step_time
             
@@ -116,7 +147,7 @@ class ChatbotService:
                 "duration": f"{step_time:.4f}s",
                 "search_filters": chroma_filters,
                 "documents_found": documents_found,
-                "n_results_requested": 25,
+                "n_results_requested": context_size,
                 "sample_documents": context_results.get('documents', [[]])[0][:3] if documents_found > 0 else [],
                 "distances": context_results.get('distances', [[]])[0][:3] if documents_found > 0 else []
             }
@@ -264,12 +295,35 @@ class ChatbotService:
                 "context_count": 0
             }
         
+        # Step 6: Apply accurate filtering and get real counts BEFORE AI generation
+        filtered_data, actual_count, display_count = self._apply_accurate_filtering_and_limiting(db_results, user_query, query_classification, parameter_context)
+
         try:
-            # Step 6: Generate AI response using RAG
+            # Step 7: Generate AI response using intelligent analysis + RAG
             ai_start = time.time()
+
+            # Step 7a: Perform Intelligent Oceanographic Analysis
+            intelligent_analysis = None
+            if self.oceanographic_intelligence and filtered_data:
+                try:
+                    intelligent_analysis = self.oceanographic_intelligence.perform_intelligent_analysis(
+                        user_query, filtered_data
+                    )
+                    print(f"Intelligent Analysis: {intelligent_analysis.analysis_type} with {len(intelligent_analysis.primary_findings)} findings")
+                except Exception as e:
+                    print(f"Intelligent analysis failed: {e}")
+
+            # Pass comprehensive context to AI
+            enhanced_session_context = session_context.copy() if session_context else {}
+            enhanced_session_context['actual_count'] = actual_count
+            enhanced_session_context['sql_limit_applied'] = len(db_results) < actual_count
+            enhanced_session_context['display_limited'] = display_count < actual_count
+            enhanced_session_context['intelligent_analysis'] = intelligent_analysis
+            enhanced_session_context['query_enhancement'] = query_enhancement
+
             ai_response = await self.rag_engine.generate_response(
-                user_query, context_results, db_results, query_classification, 
-                session_context, parameter_context.is_chart_request
+                user_query, context_results, db_results, query_classification,
+                enhanced_session_context, parameter_context.is_chart_request
             )
             step_time = time.time() - ai_start
             timing_data['ai_generation'] = step_time
@@ -294,32 +348,29 @@ class ChatbotService:
             ai_response = self._generate_emergency_response(user_query, db_results, query_classification)
         
         try:
-            # Step 7: Build visualization data
+            # Step 8: Build visualization data using FILTERED data for consistency
             viz_start = time.time()
             min_data_required = 5 if parameter_context.is_chart_request else 10
-            
-            if len(db_results) >= min_data_required:
-                # Debug: Log db_results summary for map investigation
-                print(f"DEBUG: Building visualization with {len(db_results)} results")
-                if db_results:
-                    sample = db_results[0]
-                    print(f"DEBUG: Sample result keys: {list(sample.keys())}")
-                    print(f"DEBUG: Sample lat/lon: {sample.get('latitude')}, {sample.get('longitude')}")
-                    print(f"DEBUG: Sample float_id: {sample.get('float_id')}")
-                
+
+            if len(filtered_data) >= min_data_required:
+                print(f"Building visualization with {len(filtered_data)} filtered results (from {len(db_results)} raw results)")
+                if filtered_data:
+                    sample = filtered_data[0]
+                    print(f"Visualization sample - lat/lon: {sample.get('latitude')}, {sample.get('longitude')}, temp: {sample.get('temperature')}")
+
                 viz_data = await self.visualization_builder.build_visualization(
-                    db_results, query_classification, user_query, context_results
+                    filtered_data, query_classification, user_query, context_results
                 )
-                
+
                 if parameter_context.is_chart_request or self._has_meaningful_visualizations(viz_data):
-                    print(f"Visualization data generated successfully")
+                    print(f"Visualization data generated successfully with {len(filtered_data)} consistent data points")
                 else:
-                    viz_data = {"map": {"points": []}, "depth_profile": {"data": []}, 
+                    viz_data = {"map": {"points": []}, "depth_profile": {"data": []},
                               "reasoning": "Insufficient data quality for meaningful visualizations"}
             else:
-                viz_data = {"map": {"points": []}, "depth_profile": {"data": []}, 
-                          "reasoning": f"Only {len(db_results)} data points - minimum {min_data_required} required"}
-            
+                viz_data = {"map": {"points": []}, "depth_profile": {"data": []},
+                          "reasoning": f"Only {len(filtered_data)} filtered data points - minimum {min_data_required} required"}
+
             timing_data['visualization'] = time.time() - viz_start
                 
         except Exception as e:
@@ -327,16 +378,13 @@ class ChatbotService:
             viz_data = {"map": {"points": []}, "depth_profile": {"data": []}, 
                        "reasoning": "Visualization generation error"}
         
-        # Step 8: Generate response summary and finalize
+        # Step 9: Generate response summary and finalize
         try:
             response_summary = self.rag_engine.generate_response_summary(ai_response, db_results, query_classification)
         except Exception as e:
             print(f"Failed to generate response summary: {e}")
             response_summary = "AI response generated"
-        
-        # Intelligently limit data based on parameter context
-        limited_data = self._intelligently_limit_data(db_results, user_query, query_classification)
-        
+
         # Calculate total processing time
         total_time = time.time() - start_time
         timing_data['total'] = total_time
@@ -347,10 +395,10 @@ class ChatbotService:
         # Log performance metrics
         parameter_logger.log_performance_metrics(parameter_context, timing_data)
         
-        # Prepare unified response
+        # Prepare unified response with accurate counting
         return {
             "response": ai_response,
-            "data": limited_data,
+            "data": filtered_data,
             "visualization": viz_data,
             "pipeline_flow": pipeline_flow,  # Add pipeline flow data to response
             "query_params": {
@@ -358,8 +406,17 @@ class ChatbotService:
                 "parameter_summary": parameter_context.get_summary(),
                 "sql_used": sql_used,
                 "context_retrieved": len(context_results.get('documents', [[]])[0]) if context_results.get('documents') else 0,
-                "data_points": len(db_results),
-                "limited_to": len(limited_data),
+                "actual_data_count": actual_count,    # Real count from database
+                "data_points": len(db_results),       # SQL result count (may be limited by LIMIT clause)
+                "display_count": display_count,       # What's actually shown to user
+                "limited_to": display_count,          # Backward compatibility
+                "data_transparency": {
+                    "total_matching": actual_count,
+                    "sql_returned": len(db_results),
+                    "displayed": display_count,
+                    "is_limited": display_count < actual_count,
+                    "limitation_reason": "Display optimization" if display_count < actual_count else None
+                },
                 "consistency_status": "passed" if validation_report["is_consistent"] else "failed",
                 "processing_time": f"{timing_data['total']:.2f}s"
             },
@@ -629,42 +686,328 @@ class ChatbotService:
         
         return " ".join(response_parts)
 
+    def _apply_accurate_filtering_and_limiting(self, db_results: List[Dict], user_query: str,
+                                             query_classification: Dict, parameter_context) -> Tuple[List[Dict], int, int]:
+        """Apply accurate filtering based on user query and return transparent counts"""
+
+        if not db_results:
+            return [], 0, 0
+
+        # First, get the actual count that matches the query criteria
+        # We need to execute a COUNT query to get the true total
+        actual_count = self._get_actual_count(parameter_context)
+
+        # Apply post-SQL filtering for exact parameter matches (like temp > 20)
+        filtered_results = self._apply_parameter_specific_filtering(db_results, parameter_context, user_query)
+
+        # Apply intelligent limiting for display purposes
+        display_results = self._intelligently_limit_data(filtered_results, user_query, query_classification)
+
+        return display_results, actual_count, len(display_results)
+
+    def _get_actual_count(self, parameter_context) -> int:
+        """Get the actual count of data that matches the query criteria"""
+        try:
+            from database.database import SessionLocal
+            from sqlalchemy import text
+
+            db = SessionLocal()
+            try:
+                # Build a COUNT query using the same filters as the main query
+                count_sql = self._build_count_query(parameter_context)
+                print(f"DEBUG: Executing count query: {count_sql}")
+
+                if count_sql:
+                    result = db.execute(text(count_sql)).fetchone()
+                    actual_count = result[0] if result else 0
+                    print(f"DEBUG: Count query returned: {actual_count}")
+                    return actual_count
+                else:
+                    # Fallback: get total database count if no filters
+                    result = db.execute(text("SELECT COUNT(*) FROM argo_measurements")).fetchone()
+                    fallback_count = result[0] if result else 0
+                    print(f"DEBUG: Fallback count query returned: {fallback_count}")
+                    return fallback_count
+            finally:
+                db.close()
+        except Exception as e:
+            print(f"ERROR: Failed to get actual count: {e}")
+            import traceback
+            traceback.print_exc()
+            return 0
+
+    def _build_count_query(self, parameter_context) -> Optional[str]:
+        """Build a COUNT query based on parameter context"""
+        try:
+            where_conditions = []
+
+            # Location filter
+            if parameter_context.location_bounds:
+                bounds = parameter_context.location_bounds
+                where_conditions.append(f"latitude BETWEEN {bounds['lat_min']} AND {bounds['lat_max']}")
+                where_conditions.append(f"longitude BETWEEN {bounds['lon_min']} AND {bounds['lon_max']}")
+
+            # Temporal filter
+            if parameter_context.date_years:
+                year_conditions = [f"(date >= '{year}-01-01' AND date <= '{year}-12-31')" for year in parameter_context.date_years]
+                where_conditions.append(f"({' OR '.join(year_conditions)})")
+            elif parameter_context.date_range:
+                start_date, end_date = parameter_context.date_range
+                where_conditions.append(f"date >= '{start_date.isoformat()}'")
+                where_conditions.append(f"date <= '{end_date.isoformat()}'")
+
+            # Depth filter
+            if parameter_context.depth_range:
+                if parameter_context.depth_type == 'operator':
+                    operator, value = parameter_context.depth_range
+                    where_conditions.append(f"depth {operator} {value}")
+                else:
+                    min_depth, max_depth = parameter_context.depth_range
+                    where_conditions.append(f"depth BETWEEN {min_depth} AND {max_depth}")
+
+            # Parameter filter
+            if parameter_context.parameters:
+                for param in parameter_context.parameters:
+                    where_conditions.append(f"{param} IS NOT NULL")
+
+            # Temperature threshold filter
+            if parameter_context.temperature_range:
+                operator, temp_value = parameter_context.temperature_range
+                where_conditions.append(f"temperature {operator} {temp_value}")
+                where_conditions.append(f"temperature IS NOT NULL")
+
+            # Salinity threshold filter
+            if parameter_context.salinity_range:
+                operator, sal_value = parameter_context.salinity_range
+                where_conditions.append(f"salinity {operator} {sal_value}")
+                where_conditions.append(f"salinity IS NOT NULL")
+
+            # Float ID filter
+            if parameter_context.float_ids:
+                float_list = "', '".join(parameter_context.float_ids)
+                where_conditions.append(f"float_id IN ('{float_list}')")
+
+            # Build final count query
+            count_sql = "SELECT COUNT(*) FROM argo_measurements"
+            if where_conditions:
+                count_sql += " WHERE " + " AND ".join(where_conditions)
+
+            return count_sql
+
+        except Exception as e:
+            print(f"Error building count query: {e}")
+            return None
+
+    def _apply_parameter_specific_filtering(self, db_results: List[Dict], parameter_context, user_query: str) -> List[Dict]:
+        """Apply parameter-specific filtering to ensure data matches exact user criteria"""
+
+        filtered_results = db_results.copy()
+
+        try:
+            # Apply temperature threshold filtering
+            if parameter_context.temperature_range:
+                operator, temp_value = parameter_context.temperature_range
+                if operator == '>':
+                    filtered_results = [r for r in filtered_results if r.get('temperature') is not None and r['temperature'] > temp_value]
+                elif operator == '<':
+                    filtered_results = [r for r in filtered_results if r.get('temperature') is not None and r['temperature'] < temp_value]
+                elif operator == '>=':
+                    filtered_results = [r for r in filtered_results if r.get('temperature') is not None and r['temperature'] >= temp_value]
+                elif operator == '<=':
+                    filtered_results = [r for r in filtered_results if r.get('temperature') is not None and r['temperature'] <= temp_value]
+
+                print(f"Temperature filter ({operator} {temp_value}): {len(db_results)} -> {len(filtered_results)} results")
+
+            # Apply salinity threshold filtering
+            if parameter_context.salinity_range:
+                operator, sal_value = parameter_context.salinity_range
+                if operator == '>':
+                    filtered_results = [r for r in filtered_results if r.get('salinity') is not None and r['salinity'] > sal_value]
+                elif operator == '<':
+                    filtered_results = [r for r in filtered_results if r.get('salinity') is not None and r['salinity'] < sal_value]
+                elif operator == '>=':
+                    filtered_results = [r for r in filtered_results if r.get('salinity') is not None and r['salinity'] >= sal_value]
+                elif operator == '<=':
+                    filtered_results = [r for r in filtered_results if r.get('salinity') is not None and r['salinity'] <= sal_value]
+
+                print(f"Salinity filter ({operator} {sal_value}): {len(db_results)} -> {len(filtered_results)} results")
+
+            # Apply depth filtering if not already handled by SQL
+            if parameter_context.depth_range and parameter_context.depth_type == 'operator':
+                operator, depth_value = parameter_context.depth_range
+                if operator == '>=' or operator == '>':
+                    filtered_results = [r for r in filtered_results if r.get('depth') is not None and r['depth'] >= depth_value]
+                elif operator == '<=' or operator == '<':
+                    filtered_results = [r for r in filtered_results if r.get('depth') is not None and r['depth'] <= depth_value]
+
+                print(f"Depth filter ({operator} {depth_value}): {len(db_results)} -> {len(filtered_results)} results")
+
+        except Exception as e:
+            print(f"Parameter filtering failed: {e}, returning unfiltered results")
+            return db_results
+
+        return filtered_results
+
     def _intelligently_limit_data(self, db_results: List[Dict], user_query: str, query_classification: Dict) -> List[Dict]:
-        """Intelligently limit data based on query context and type"""
-        
+        """Intelligently limit data based on query context and scientific requirements"""
+
         if not db_results:
             return []
-        
+
+        import numpy as np
+        from sklearn.cluster import KMeans
+        from sklearn.preprocessing import StandardScaler
+
         query_lower = user_query.lower()
-        
-        # Determine appropriate limit based on query characteristics
+        data_size = len(db_results)
+
+        # Scientific data analysis requires adequate sample sizes
+        min_samples_for_analysis = {
+            'statistical': max(30, int(data_size * 0.05)),    # 5% minimum, at least 30
+            'trend': max(50, int(data_size * 0.10)),          # 10% minimum, at least 50
+            'spatial': max(100, int(data_size * 0.15)),       # 15% minimum, at least 100
+            'depth_profile': max(200, int(data_size * 0.20)), # 20% minimum, at least 200
+            'comprehensive': max(500, int(data_size * 0.30))  # 30% minimum, at least 500
+        }
+
+        # Determine analysis type and required sample size
         if any(word in query_lower for word in ['sample', 'example', 'few', 'some']):
-            limit = 15  
-        elif any(word in query_lower for word in ['specific', 'exact', 'precise']):
-            limit = 25
-        elif any(word in query_lower for word in ['trend', 'pattern', 'analysis', 'compare']):
-            limit = 75 
+            limit = min(50, data_size)  # Still provide meaningful sample
+        elif any(word in query_lower for word in ['depth', 'profile', 'vertical', 'layers']):
+            limit = min(min_samples_for_analysis['depth_profile'], data_size)
+        elif any(word in query_lower for word in ['trend', 'pattern', 'time series', 'temporal']):
+            limit = min(min_samples_for_analysis['trend'], data_size)
+        elif any(word in query_lower for word in ['spatial', 'geographic', 'region', 'area', 'distribution']):
+            limit = min(min_samples_for_analysis['spatial'], data_size)
+        elif any(word in query_lower for word in ['analysis', 'statistical', 'correlation', 'compare']):
+            limit = min(min_samples_for_analysis['statistical'], data_size)
         elif query_classification.get("complexity_level") == "complex":
-            limit = 100 
-        elif any(word in query_lower for word in ['all', 'every', 'total', 'complete']):
-            limit = 150 
+            limit = min(min_samples_for_analysis['comprehensive'], data_size)
+        elif any(word in query_lower for word in ['knowledge base', 'all data', 'full data', 'entire data', 'complete data', 'everything']):
+            limit = min(1000, data_size)  # Show substantial portion for comprehensive requests
+        elif any(word in query_lower for word in ['various', 'different', 'range', 'multiple']):
+            # For diversity-focused queries, ensure good coverage
+            limit = min(min_samples_for_analysis['spatial'], data_size)
         else:
-            # Default intelligent limiting based on data characteristics
-            unique_locations = len(set((r.get('latitude', 0), r.get('longitude', 0)) for r in db_results))
-            unique_depths = len(set(r.get('depth', 0) for r in db_results if r.get('depth') is not None))
-            unique_dates = len(set(str(r.get('date', ''))[:10] for r in db_results if r.get('date')))
-            
-            # Conservative adaptive limit based on data diversity
-            if unique_locations > 20 or unique_depths > 15 or unique_dates > 10:
-                limit = 60  
-            else:
-                limit = 40  
+            # Default: balance performance with scientific validity
+            limit = min(min_samples_for_analysis['statistical'], data_size)  
         
-        # Smart sampling to maintain representativeness
+        # Smart sampling using scientific methods to maintain representativeness
         if len(db_results) <= limit:
             return db_results
-        
-        # Stratified sampling to maintain data diversity
+
+        print(f"Scientific sampling: {data_size} -> {limit} ({limit/data_size*100:.1f}%) for query type analysis")
+
+        # Use scientific sampling methods to ensure representativeness
+        try:
+            return self._scientific_stratified_sampling(db_results, limit, query_lower)
+        except Exception as e:
+            print(f"Scientific sampling failed: {e}, using fallback")
+            return self._fallback_sampling(db_results, limit)
+
+    def _scientific_stratified_sampling(self, db_results: List[Dict], limit: int, query_context: str) -> List[Dict]:
+        """Use scientific sampling methods to ensure representative data"""
+        import numpy as np
+        from sklearn.cluster import KMeans
+        from sklearn.preprocessing import StandardScaler
+        import pandas as pd
+
+        # Convert to DataFrame for easier manipulation
+        df = pd.DataFrame(db_results)
+
+        # Create features for stratification
+        features = []
+        feature_names = []
+
+        # Geographic stratification
+        if 'latitude' in df.columns and 'longitude' in df.columns:
+            features.extend([df['latitude'].fillna(0), df['longitude'].fillna(0)])
+            feature_names.extend(['lat', 'lon'])
+
+        # Depth stratification (critical for oceanographic data)
+        if 'depth' in df.columns and df['depth'].notna().sum() > 0:
+            features.append(df['depth'].fillna(df['depth'].mean()))
+            feature_names.append('depth')
+
+        # Temporal stratification
+        if 'date' in df.columns:
+            # Convert dates to numeric for clustering
+            dates_numeric = pd.to_datetime(df['date'], errors='coerce').astype('int64') / 10**18
+            features.append(dates_numeric.fillna(dates_numeric.mean()))
+            feature_names.append('date')
+
+        # Parameter value stratification (if specific parameter requested)
+        if 'temperature' in query_context and 'temperature' in df.columns:
+            features.append(df['temperature'].fillna(df['temperature'].mean()))
+            feature_names.append('temp')
+
+        if 'salinity' in query_context and 'salinity' in df.columns:
+            features.append(df['salinity'].fillna(df['salinity'].mean()))
+            feature_names.append('sal')
+
+        if not features:
+            # Fallback to random sampling if no features available
+            return self._fallback_sampling(db_results, limit)
+
+        # Create feature matrix
+        X = np.column_stack(features)
+
+        # Standardize features
+        scaler = StandardScaler()
+        X_scaled = scaler.fit_transform(X)
+
+        # Determine optimal number of clusters (strata)
+        n_clusters = min(max(5, limit // 20), 20, len(db_results) // 10)
+
+        # Perform k-means clustering to create strata
+        kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
+        clusters = kmeans.fit_predict(X_scaled)
+
+        # Stratified sampling within each cluster
+        selected_indices = []
+        samples_per_cluster = limit // n_clusters
+        remaining_samples = limit % n_clusters
+
+        for cluster_id in range(n_clusters):
+            cluster_indices = np.where(clusters == cluster_id)[0]
+
+            if len(cluster_indices) == 0:
+                continue
+
+            # Calculate samples for this cluster
+            n_samples = samples_per_cluster
+            if remaining_samples > 0:
+                n_samples += 1
+                remaining_samples -= 1
+
+            n_samples = min(n_samples, len(cluster_indices))
+
+            # Random sampling within cluster
+            selected_cluster_indices = np.random.choice(
+                cluster_indices, size=n_samples, replace=False
+            )
+            selected_indices.extend(selected_cluster_indices)
+
+        # Ensure we have exactly the right number of samples
+        if len(selected_indices) > limit:
+            selected_indices = np.random.choice(selected_indices, size=limit, replace=False)
+
+        return [db_results[i] for i in selected_indices]
+
+    def _fallback_sampling(self, db_results: List[Dict], limit: int) -> List[Dict]:
+        """Fallback sampling method"""
+        import random
+
+        # Systematic sampling with random start
+        step = len(db_results) / limit
+        start = random.randint(0, int(step))
+        indices = [int(start + i * step) for i in range(limit)]
+        indices = [min(i, len(db_results) - 1) for i in indices]  # Ensure within bounds
+
+        return [db_results[i] for i in indices]
+
+    def _old_stratified_sampling(self, db_results: List[Dict], limit: int) -> List[Dict]:
+        """Legacy stratified sampling method"""
         try:
             # Sample across different dimensions to preserve patterns
             sorted_by_depth = sorted(db_results, key=lambda x: x.get('depth', 0))

@@ -57,12 +57,25 @@ class RAGEngine:
                                 db_results: List[Dict], query_classification: Dict, session_context: dict = None) -> str:
         """Generate response using Retrieval-Augmented Generation with Gemini"""
         
-        # Prepare context from ChromaDB with increased context for better analysis
-        context_docs = context_results.get('documents', [[]])[0][:8] if context_results.get('documents') else []
+        # Prepare context from ChromaDB with dynamic context sizing for comprehensive analysis
+        available_docs = context_results.get('documents', [[]])[0] if context_results.get('documents') else []
+
+        # Use more context for comprehensive queries, but manage token limits
+        if len(available_docs) > 50:
+            # For large context sets, use top results plus stratified sampling
+            context_docs = available_docs[:20] + available_docs[20::5][:15]  # Top 20 + every 5th after that
+            context_docs = context_docs[:30]  # Limit to 30 total
+        elif len(available_docs) > 20:
+            context_docs = available_docs[:20]  # Top 20 for good coverage
+        else:
+            context_docs = available_docs  # Use all available
+
+        print(f"Using {len(context_docs)} context documents out of {len(available_docs)} available for comprehensive AI response")
         context_text = self._format_context(context_docs)
         
-        # Prepare data summary
-        data_summary = self._prepare_data_summary(db_results)
+        # Prepare data summary with actual count context
+        actual_count = session_context.get('actual_count') if session_context else None
+        data_summary = self._prepare_data_summary(db_results, actual_count)
         
         # Prepare query classification info
         classification_info = self._format_classification(query_classification)
@@ -197,12 +210,19 @@ Remember: You're here to help users explore ocean data. Be informative, friendly
         else:
             return "\n".join(formatted_context)
     
-    def _prepare_data_summary(self, db_results: List[Dict]) -> str:
+    def _prepare_data_summary(self, db_results: List[Dict], actual_count: int = None) -> str:
         """Prepare a comprehensive summary of the data results"""
         if not db_results:
             return "No data found matching the query criteria."
-        
-        summary_parts = [f"Found {len(db_results)} measurements"]
+
+        # Use actual count if provided, otherwise fall back to db_results length
+        if actual_count is not None and actual_count != len(db_results):
+            if actual_count > len(db_results):
+                summary_parts = [f"Found {actual_count} total measurements (analyzing sample of {len(db_results)})"]
+            else:
+                summary_parts = [f"Found {actual_count} measurements"]
+        else:
+            summary_parts = [f"Found {len(db_results)} measurements"]
         
         # Temperature analysis
         temps = [r['temperature'] for r in db_results if r['temperature'] is not None]

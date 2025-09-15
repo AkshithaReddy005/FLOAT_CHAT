@@ -124,55 +124,120 @@ const OceanMap: React.FC<OceanMapProps> = ({ points, className = '' }) => {
             weight={2}
             opacity={0.9}
             fillOpacity={0.8}
-            className=""
+            className="ocean-marker"
+            eventHandlers={{
+              mouseover: (e) => {
+                const marker = e.target;
+                marker.setStyle({
+                  weight: 3,
+                  opacity: 1,
+                  fillOpacity: 1,
+                  radius: getMarkerSize(point.depth) + 2
+                });
+              },
+              mouseout: (e) => {
+                const marker = e.target;
+                marker.setStyle({
+                  weight: 2,
+                  opacity: 0.9,
+                  fillOpacity: 0.8,
+                  radius: getMarkerSize(point.depth)
+                });
+              }
+            }}
           >
-            <Popup className="custom-popup">
-              <div className="p-3 min-w-48">
-                <div className="font-bold text-lg text-blue-800 mb-2">
-                  Float {point.float_id}
-                </div>
-                
-                <div className="space-y-2 text-sm">
-                  <div className="flex justify-between">
-                    <span className="font-medium text-gray-600">Location:</span>
-                    <span className="text-gray-800">
-                      {point.lat.toFixed(3)}°, {point.lon.toFixed(3)}°
-                    </span>
+            <Popup
+              className="custom-popup"
+              maxWidth={280}
+              closeButton={true}
+              autoPan={true}
+            >
+              <div className="p-4 min-w-64 bg-white rounded-lg">
+                <div className="flex items-center gap-2 mb-3">
+                  <div
+                    className="w-4 h-4 rounded-full border-2 border-white"
+                    style={{ backgroundColor: getTemperatureColor(point.temperature) }}
+                  />
+                  <div className="font-bold text-lg text-slate-800">
+                    Float {point.float_id}
                   </div>
-                  
+                </div>
+
+                <div className="space-y-3 text-sm">
+                  <div className="bg-gray-50 p-2 rounded-md">
+                    <div className="flex justify-between items-center">
+                      <span className="font-medium text-gray-600 flex items-center gap-1">
+                        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
+                        </svg>
+                        Location:
+                      </span>
+                      <span className="text-gray-800 font-mono text-xs">
+                        {point.lat.toFixed(3)}°N, {point.lon.toFixed(3)}°E
+                      </span>
+                    </div>
+                  </div>
+
                   {point.temperature !== undefined && point.temperature !== null && (
-                    <div className="flex justify-between">
-                      <span className="font-medium text-gray-600">Temperature:</span>
-                      <span className="text-red-600 font-semibold">
+                    <div className="flex justify-between items-center border-l-4 border-red-400 pl-3">
+                      <span className="font-medium text-gray-600 flex items-center gap-1">
+                        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                        </svg>
+                        Temperature:
+                      </span>
+                      <span className="text-red-600 font-bold text-lg">
                         {point.temperature.toFixed(2)}°C
                       </span>
                     </div>
                   )}
-                  
+
                   {point.salinity !== undefined && point.salinity !== null && (
-                    <div className="flex justify-between">
-                      <span className="font-medium text-gray-600">Salinity:</span>
-                      <span className="text-blue-600 font-semibold">
-                        {point.salinity.toFixed(2)}
+                    <div className="flex justify-between items-center border-l-4 border-blue-400 pl-3">
+                      <span className="font-medium text-gray-600 flex items-center gap-1">
+                        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M9 19l3 3m0 0l3-3m-3 3V10" />
+                        </svg>
+                        Salinity:
+                      </span>
+                      <span className="text-blue-600 font-bold text-lg">
+                        {point.salinity.toFixed(3)} PSU
                       </span>
                     </div>
                   )}
-                  
+
                   {point.depth !== undefined && point.depth !== null && (
-                    <div className="flex justify-between">
-                      <span className="font-medium text-gray-600">Depth:</span>
-                      <span className="text-indigo-600 font-semibold">
+                    <div className="flex justify-between items-center border-l-4 border-indigo-400 pl-3">
+                      <span className="font-medium text-gray-600 flex items-center gap-1">
+                        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 14l-7 7m0 0l-7-7m7 7V3" />
+                        </svg>
+                        Depth:
+                      </span>
+                      <span className="text-indigo-600 font-bold text-lg">
                         {point.depth.toFixed(1)}m
                       </span>
                     </div>
                   )}
-                  
+
                   {point.date && (
-                    <div className="flex justify-between">
-                      <span className="font-medium text-gray-600">Date:</span>
-                      <span className="text-gray-800">
-                        {new Date(point.date).toLocaleDateString()}
-                      </span>
+                    <div className="bg-gray-50 p-2 rounded-md">
+                      <div className="flex justify-between items-center">
+                        <span className="font-medium text-gray-600 flex items-center gap-1">
+                          <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                          </svg>
+                          Date:
+                        </span>
+                        <span className="text-gray-800 font-medium">
+                          {new Date(point.date).toLocaleDateString('en-US', {
+                            year: 'numeric',
+                            month: 'short',
+                            day: 'numeric'
+                          })}
+                        </span>
+                      </div>
                     </div>
                   )}
                 </div>

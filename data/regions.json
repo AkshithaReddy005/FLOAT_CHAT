@@ -1,0 +1,46 @@
+{
+  "regions": {
+    "arabian_sea": {
+      "lat_min": 10,
+      "lat_max": 25,
+      "lon_min": 60,
+      "lon_max": 80,
+      "aliases": ["arabian sea", "arabian", "mumbai region", "western arabian sea", "northeastern arabian sea"]
+    },
+    "equatorial_indian_ocean": {
+      "lat_min": -10,
+      "lat_max": 10,
+      "lon_min": 60,
+      "lon_max": 100,
+      "aliases": ["equatorial indian ocean", "equatorial indian", "central indian ocean", "tropical indian ocean"]
+    },
+    "southern_indian_ocean": {
+      "lat_min": -40,
+      "lat_max": -10,
+      "lon_min": 20,
+      "lon_max": 120,
+      "aliases": ["southern indian ocean", "southern indian", "south indian ocean", "southern hemisphere indian ocean", "antarctic indian ocean"]
+    },
+    "indian_ocean": {
+      "lat_min": -40,
+      "lat_max": 30,
+      "lon_min": 20,
+      "lon_max": 120,
+      "aliases": ["indian ocean", "indian", "indo-pacific", "indian ocean basin"]
+    },
+    "bay_of_bengal": {
+      "lat_min": 5,
+      "lat_max": 25,
+      "lon_min": 80,
+      "lon_max": 100,
+      "aliases": ["bay of bengal", "bengal bay", "eastern indian ocean", "bengal", "bay bengal"]
+    },
+    "western_indian_ocean": {
+      "lat_min": -35,
+      "lat_max": 25,
+      "lon_min": 20,
+      "lon_max": 80,
+      "aliases": ["western indian ocean", "western indian", "west indian ocean", "african coast indian ocean"]
+    }
+  }
+}

@@ -266,7 +266,19 @@ Generate ONLY the SQL query (no explanation or markdown):"""
         if parameter_context.parameters:
             for param in parameter_context.parameters:
                 where_conditions.append(f"{param} IS NOT NULL")
-        
+
+        # Temperature threshold filter - FIXED
+        if parameter_context.temperature_range:
+            operator, temp_value = parameter_context.temperature_range
+            where_conditions.append(f"temperature {operator} {temp_value}")
+            where_conditions.append(f"temperature IS NOT NULL")
+
+        # Salinity threshold filter - FIXED
+        if parameter_context.salinity_range:
+            operator, sal_value = parameter_context.salinity_range
+            where_conditions.append(f"salinity {operator} {sal_value}")
+            where_conditions.append(f"salinity IS NOT NULL")
+
         # Float ID filter
         if parameter_context.float_ids:
             float_list = "', '".join(parameter_context.float_ids)
@@ -338,9 +350,18 @@ Generate ONLY the SQL query (no explanation or markdown):"""
         
         # Add ORDER BY and LIMIT for non-analytical queries
         sql += " ORDER BY date DESC"
-        limit = 1500 if parameter_context.complexity_level == "complex" else 800
+
+        # Determine appropriate limit based on query type and data availability
+        if parameter_context.is_full_data_request:
+            # For full knowledge base requests, allow comprehensive data access
+            limit = 8000  # Allow full dataset exploration
+        elif parameter_context.complexity_level == "complex":
+            limit = 3000  # More data for complex analysis
+        else:
+            limit = 1500  # Reasonable default for standard queries
+
         sql += f" LIMIT {limit}"
-        
+
         return sql
     
     def _get_location_bounds_from_name(self, location_name: str) -> Optional[Dict]:
@@ -398,7 +419,19 @@ Generate ONLY the SQL query (no explanation or markdown):"""
             else:  # Range-based depth filtering
                 depth_start, depth_end = depth_range
                 where_conditions.append(f"depth BETWEEN {depth_start} AND {depth_end}")
-        
+
+        # Add temperature threshold filter - FIXED
+        if params.get("temperature_range"):
+            operator, temp_value = params["temperature_range"]
+            where_conditions.append(f"temperature {operator} {temp_value}")
+            where_conditions.append(f"temperature IS NOT NULL")
+
+        # Add salinity threshold filter - FIXED
+        if params.get("salinity_range"):
+            operator, sal_value = params["salinity_range"]
+            where_conditions.append(f"salinity {operator} {sal_value}")
+            where_conditions.append(f"salinity IS NOT NULL")
+
         # Add parameter filter (temperature, salinity, etc.)
         if params.get("parameter"):
             param_name = params["parameter"]
@@ -445,16 +478,16 @@ Generate ONLY the SQL query (no explanation or markdown):"""
     def _extract_parameters(self, query_lower: str, session_context: dict = None) -> Dict:
         """Extract parameters from query text with session context support"""
         params = {}
-        
+
         # Extract location
         location_patterns = [
             r"mumbai",
-            r"bombay", 
+            r"bombay",
             r"near\s+([a-zA-Z\s]+?)(?:\s|$)",
             r"in\s+([a-zA-Z\s]+?)(?:\s|$)",
             r"around\s+([a-zA-Z\s]+?)(?:\s|$)"
         ]
-        
+
         location_found = False
         for pattern in location_patterns:
             match = re.search(pattern, query_lower)
@@ -465,7 +498,7 @@ Generate ONLY the SQL query (no explanation or markdown):"""
                     params["location"] = match.group(1).strip()
                 location_found = True
                 break
-        
+
         # If no explicit location found, use session context for relative queries
         if not location_found and session_context:
             relative_indicators = ["below", "above", "deeper", "shallower", "there", "that area", "same area"]
@@ -478,17 +511,17 @@ Generate ONLY the SQL query (no explanation or markdown):"""
                             params["location"] = location.lower()
                             print(f"Using session context location: {params['location']} for query: {query_lower}")
                             break
-        
+
         # Extract date information
         if "march" in query_lower and "2023" in query_lower:
             params["date_range"] = (datetime(2023, 3, 1), datetime(2023, 4, 1))
         elif "2023" in query_lower:
             params["date_range"] = (datetime(2023, 1, 1), datetime(2024, 1, 1))
-        
+
         # Extract depth with better pattern matching
         depth_patterns = [
             r"below\s*(\d+)\s*m",      # "below 1000m"
-            r"above\s*(\d+)\s*m",      # "above 500m" 
+            r"above\s*(\d+)\s*m",      # "above 500m"
             r"deeper\s*than\s*(\d+)",  # "deeper than 1000"
             r"shallower\s*than\s*(\d+)", # "shallower than 500"
             r"greater\s*than\s*(\d+)\s*m", # "greater than 200m"
@@ -497,7 +530,7 @@ Generate ONLY the SQL query (no explanation or markdown):"""
             r"(\d+)\s*m.*deep",        # "1000m deep"
             r"at\s*(\d+)\s*m"          # "at 1000m"
         ]
-        
+
         for i, pattern in enumerate(depth_patterns):
             match = re.search(pattern, query_lower)
             if match:
@@ -517,7 +550,45 @@ Generate ONLY the SQL query (no explanation or markdown):"""
                 else:  # specific depth or range
                     params["depth_range"] = (depth - 50, depth + 50)
                 break
-        
+
+        # Extract temperature thresholds - FIXED: Add temperature value filters
+        temp_patterns = [
+            r"temperature\s*(?:is\s*)?(?:less\s+than|below|under)\s*(\d+(?:\.\d+)?)\s*(?:degrees?|°)?c?",  # "temperature less than 20°C"
+            r"temperature\s*(?:is\s*)?(?:greater\s+than|above|over)\s*(\d+(?:\.\d+)?)\s*(?:degrees?|°)?c?", # "temperature greater than 25°C"
+            r"temps?\s*(?:less\s+than|below|under)\s*(\d+(?:\.\d+)?)\s*(?:degrees?|°)?c?",  # "temp below 20°C"
+            r"temps?\s*(?:greater\s+than|above|over)\s*(\d+(?:\.\d+)?)\s*(?:degrees?|°)?c?", # "temp above 25°C"
+            r"(?:where|with|having)\s+temperature\s*[<]\s*(\d+(?:\.\d+)?)", # "where temperature < 20"
+            r"(?:where|with|having)\s+temperature\s*[>]\s*(\d+(?:\.\d+)?)", # "where temperature > 20"
+        ]
+
+        for i, pattern in enumerate(temp_patterns):
+            match = re.search(pattern, query_lower)
+            if match:
+                temp_value = float(match.group(1))
+                if i in [0, 2, 4]:  # less than/below patterns
+                    params["temperature_range"] = ("<", temp_value)
+                else:  # greater than/above patterns
+                    params["temperature_range"] = (">", temp_value)
+                break
+
+        # Extract salinity thresholds
+        sal_patterns = [
+            r"salinity\s*(?:is\s*)?(?:less\s+than|below|under)\s*(\d+(?:\.\d+)?)",  # "salinity less than 35"
+            r"salinity\s*(?:is\s*)?(?:greater\s+than|above|over)\s*(\d+(?:\.\d+)?)", # "salinity greater than 35"
+            r"(?:where|with|having)\s+salinity\s*[<]\s*(\d+(?:\.\d+)?)", # "where salinity < 35"
+            r"(?:where|with|having)\s+salinity\s*[>]\s*(\d+(?:\.\d+)?)", # "where salinity > 35"
+        ]
+
+        for i, pattern in enumerate(sal_patterns):
+            match = re.search(pattern, query_lower)
+            if match:
+                sal_value = float(match.group(1))
+                if i in [0, 2]:  # less than/below patterns
+                    params["salinity_range"] = ("<", sal_value)
+                else:  # greater than/above patterns
+                    params["salinity_range"] = (">", sal_value)
+                break
+
         # Extract parameter type
         if "temperature" in query_lower:
             params["parameter"] = "temperature"
@@ -525,7 +596,7 @@ Generate ONLY the SQL query (no explanation or markdown):"""
             params["parameter"] = "salinity"
         elif "pressure" in query_lower:
             params["parameter"] = "pressure"
-        
+
         return params
     
     def _get_location_bounds(self, location: str) -> Optional[Dict]:
@@ -703,7 +774,7 @@ Generate ONLY the SQL query (no explanation or markdown):"""
         limit_match = re.search(r'limit\s+(\d+)', sql_clean)
         if limit_match:
             limit_value = int(limit_match.group(1))
-            if limit_value > 2000:  # Prevent excessive data retrieval
+            if limit_value > 10000:  # Allow much higher limits for comprehensive data requests
                 return False
         
         # Validate CTE structure if present

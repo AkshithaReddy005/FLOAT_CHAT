@@ -85,14 +85,21 @@ const CustomChart: React.FC<CustomChartProps> = ({
 
   // Sanitize chart data to prevent null/undefined errors
   const sanitizedData = chartConfig.data.map(trace => {
-    if (!trace || typeof trace !== 'object') return {};
-    
-    // Ensure trace has required properties
-    const sanitizedTrace = {
+    if (!trace || typeof trace !== 'object') return null;
+
+    // Ensure trace has required properties and clean up any undefined/null values
+    const sanitizedTrace: Record<string, any> = {
       type: trace.type || 'scatter',
-      mode: trace.mode || 'markers',
-      ...trace
+      mode: trace.mode || 'markers'
     };
+
+    // Copy all valid properties from trace, excluding null/undefined values
+    Object.keys(trace).forEach(key => {
+      const value = (trace as Record<string, any>)[key];
+      if (value != null) {
+        sanitizedTrace[key] = value;
+      }
+    });
 
     // Ensure x and y arrays exist and are valid
     if (trace.x && Array.isArray(trace.x)) {
@@ -102,29 +109,94 @@ const CustomChart: React.FC<CustomChartProps> = ({
       sanitizedTrace.y = trace.y.filter(val => val != null && !isNaN(Number(val)));
     }
 
-    return sanitizedTrace;
-  }).filter(trace => trace.x && trace.y && trace.x.length > 0 && trace.y.length > 0);
+    // Enhance hover information
+    if (sanitizedTrace.x && sanitizedTrace.y) {
+      const xLabel = chartRequestInfo?.x_axis || 'X';
+      const yLabel = chartRequestInfo?.y_axis || 'Y';
+
+      // Create custom hover template for better tooltips
+      sanitizedTrace.hovertemplate =
+        `<b>%{fullData.name}</b><br>` +
+        `${xLabel.replace('_', ' ')}: %{x}<br>` +
+        `${yLabel.replace('_', ' ')}: %{y}<br>` +
+        `<extra></extra>`;
+
+      // Add custom hover info if not already present
+      if (!sanitizedTrace.hoverinfo) {
+        sanitizedTrace.hoverinfo = 'x+y+name';
+      }
+
+      // Enhance marker styling for better visibility
+      if (sanitizedTrace.type === 'scatter' || !sanitizedTrace.type) {
+        sanitizedTrace.marker = {
+          size: 8,
+          opacity: 0.8,
+          line: {
+            width: 1,
+            color: 'rgba(255,255,255,0.8)'
+          },
+          ...(sanitizedTrace.marker || {})
+        };
+      }
+    }
+
+    // Only return trace if it has valid x and y data
+    if (sanitizedTrace.x && sanitizedTrace.y &&
+        sanitizedTrace.x.length > 0 && sanitizedTrace.y.length > 0) {
+      return sanitizedTrace;
+    }
+    return null;
+  }).filter(trace => trace !== null);
+
+  // Ensure we have valid sanitized data before rendering
+  if (!sanitizedData || sanitizedData.length === 0) {
+    return (
+      <div className={`w-full bg-white rounded-lg shadow-lg p-6 ${className}`}>
+        <div className="text-center text-gray-500">
+          <svg className="w-16 h-16 mx-auto mb-4 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+          </svg>
+          <h3 className="text-lg font-medium text-gray-900 mb-2">Invalid Chart Data</h3>
+          <p className="text-sm text-gray-600">The chart data contains invalid values and cannot be rendered.</p>
+        </div>
+      </div>
+    );
+  }
 
   // Default config if not provided
   const defaultConfig = {
     responsive: true,
     displayModeBar: true,
     displaylogo: false,
+    modeBarButtonsToRemove: ['select2d', 'lasso2d', 'autoScale2d'],
+    modeBarButtonsToAdd: ['hoverclosest', 'hovercompare'],
     toImageButtonOptions: {
       format: 'png' as const,
       filename: 'custom_chart',
       height: 500,
       width: 800,
-      scale: 1
-    }
+      scale: 2
+    },
+    scrollZoom: true,
+    doubleClick: 'reset+autosize' as const
   };
 
   const config = { ...defaultConfig, ...(chartConfig.config || {}) };
 
   // Enhance layout with better styling and null safety
   const baseLayout = chartConfig.layout || {};
+
+  // Sanitize layout to remove null/undefined values
+  const cleanLayout = Object.keys(baseLayout).reduce((acc, key) => {
+    const value = (baseLayout as Record<string, any>)[key];
+    if (value != null) {
+      acc[key] = value;
+    }
+    return acc;
+  }, {} as Record<string, any>);
+
   const enhancedLayout = {
-    ...baseLayout,
+    ...cleanLayout,
     autosize: true,
     showlegend: true,
     margin: {
@@ -132,22 +204,66 @@ const CustomChart: React.FC<CustomChartProps> = ({
       r: 20,
       t: 40,
       b: 60,
-      ...(baseLayout.margin || {})
+      ...(cleanLayout.margin || {})
     },
     font: {
       family: 'Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
       size: 12,
       color: '#374151',
-      ...(baseLayout.font || {})
+      ...(cleanLayout.font || {})
     },
     hoverlabel: {
-      bgcolor: 'white',
-      bordercolor: '#d1d5db',
-      font: { size: 12 },
-      ...(baseLayout.hoverlabel || {})
+      bgcolor: 'rgba(255,255,255,0.95)',
+      bordercolor: '#e5e7eb',
+      borderwidth: 1,
+      font: {
+        size: 13,
+        family: 'Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+        color: '#374151'
+      },
+      align: 'left',
+      ...(cleanLayout.hoverlabel || {})
     },
+    hovermode: 'closest',
     plot_bgcolor: 'rgba(255,255,255,0.9)',
-    paper_bgcolor: 'rgba(255,255,255,1)'
+    paper_bgcolor: 'rgba(255,255,255,1)',
+    // Enhanced grid and axis styling
+    xaxis: {
+      gridcolor: 'rgba(229,231,235,0.8)',
+      gridwidth: 1,
+      zerolinecolor: 'rgba(156,163,175,0.8)',
+      zerolinewidth: 1,
+      tickfont: {
+        size: 11,
+        color: '#6B7280'
+      },
+      title: {
+        font: {
+          size: 12,
+          color: '#374151',
+          family: 'Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif'
+        }
+      },
+      ...(cleanLayout.xaxis || {})
+    },
+    yaxis: {
+      gridcolor: 'rgba(229,231,235,0.8)',
+      gridwidth: 1,
+      zerolinecolor: 'rgba(156,163,175,0.8)',
+      zerolinewidth: 1,
+      tickfont: {
+        size: 11,
+        color: '#6B7280'
+      },
+      title: {
+        font: {
+          size: 12,
+          color: '#374151',
+          family: 'Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif'
+        }
+      },
+      ...(cleanLayout.yaxis || {})
+    }
   };
 
   return (
@@ -192,19 +308,28 @@ const CustomChart: React.FC<CustomChartProps> = ({
       {/* Chart */}
       <div className="rounded-lg overflow-hidden border border-gray-200 bg-white">
         <div className="w-full h-[500px] flex items-center justify-center">
-          <Plot
-            data={sanitizedData}
-            layout={enhancedLayout}
-            config={config}
-            style={{ width: '100%', height: '100%' }}
-            useResizeHandler={true}
-            className="w-full h-full"
-            onError={(error) => {
-              console.error('Plotly error:', error);
-              setError('Failed to render chart');
-            }}
-            onInitialized={() => setIsLoading(false)}
-          />
+          {error ? (
+            <div className="text-center text-red-500 p-8">
+              <svg className="w-12 h-12 mx-auto mb-4 text-red-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              <p className="text-sm">{error}</p>
+            </div>
+          ) : (
+            <Plot
+              data={sanitizedData}
+              layout={enhancedLayout}
+              config={config}
+              style={{ width: '100%', height: '100%' }}
+              useResizeHandler={true}
+              className="w-full h-full"
+              onError={(error) => {
+                console.error('Plotly error:', error);
+                setError('Failed to render chart - data may contain invalid values');
+              }}
+              onInitialized={() => setIsLoading(false)}
+            />
+          )}
         </div>
       </div>
 

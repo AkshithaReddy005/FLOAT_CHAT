@@ -84,6 +84,8 @@ class UnifiedQueryParser:
             depth_type=extracted.get("depth_type"),
             float_ids=extracted.get("float_ids"),
             parameters=extracted.get("parameters"),
+            temperature_range=extracted.get("temperature_range"),  # FIXED: Add temperature threshold
+            salinity_range=extracted.get("salinity_range"),        # FIXED: Add salinity threshold
             is_analytical=extracted.get("is_analytical", False),
             is_comparative=extracted.get("is_comparative", False),
             is_chart_request=extracted.get("is_chart_request", False),
@@ -126,7 +128,10 @@ class UnifiedQueryParser:
         # Extract data parameters
         float_ids = self._extract_float_ids(query_lower)
         parameters = self._extract_parameters(query_lower)
-        
+
+        # Extract parameter thresholds - FIXED: Add temperature/salinity threshold extraction
+        temperature_range, salinity_range = self._extract_parameter_thresholds(query_lower)
+
         # Extract query characteristics
         is_analytical = self._is_analytical_query(query_lower)
         is_comparative = self._is_comparative_query(query_lower)
@@ -144,6 +149,8 @@ class UnifiedQueryParser:
             "depth_type": depth_type,
             "float_ids": float_ids,
             "parameters": parameters,
+            "temperature_range": temperature_range,  # FIXED: Add temperature threshold
+            "salinity_range": salinity_range,        # FIXED: Add salinity threshold
             "is_analytical": is_analytical,
             "is_comparative": is_comparative,
             "is_chart_request": is_chart_request,
@@ -367,7 +374,56 @@ class UnifiedQueryParser:
             parameters.append('pressure')
         
         return parameters if parameters else None
-    
+
+    def _extract_parameter_thresholds(self, query_lower: str) -> Tuple[Optional[Tuple], Optional[Tuple]]:
+        """Extract temperature and salinity threshold filters"""
+        temperature_range = None
+        salinity_range = None
+
+        # Extract temperature thresholds
+        temp_patterns = [
+            r"temperature\s*(?:is\s*)?(?:less\s+than|below|under)\s*(\d+(?:\.\d+)?)\s*(?:degrees?|°)?c?",  # "temperature less than 20°C"
+            r"temperature\s*(?:is\s*)?(?:greater\s+than|above|over)\s*(\d+(?:\.\d+)?)\s*(?:degrees?|°)?c?", # "temperature greater than 25°C"
+            r"temps?\s*(?:less\s+than|below|under)\s*(\d+(?:\.\d+)?)\s*(?:degrees?|°)?c?",  # "temp below 20°C"
+            r"temps?\s*(?:greater\s+than|above|over)\s*(\d+(?:\.\d+)?)\s*(?:degrees?|°)?c?", # "temp above 25°C"
+            r"(?:where|with|having)\s+temperature\s*[<]\s*(\d+(?:\.\d+)?)", # "where temperature < 20"
+            r"(?:where|with|having)\s+temperature\s*[>]\s*(\d+(?:\.\d+)?)", # "where temperature > 20"
+            r"temperature\s*[>]\s*(\d+(?:\.\d+)?)", # "temperature > 25"
+            r"temperature\s*[<]\s*(\d+(?:\.\d+)?)", # "temperature < 25"
+            r"temps?\s*[>]\s*(\d+(?:\.\d+)?)", # "temp > 25"
+            r"temps?\s*[<]\s*(\d+(?:\.\d+)?)", # "temp < 25"
+        ]
+
+        for i, pattern in enumerate(temp_patterns):
+            match = re.search(pattern, query_lower)
+            if match:
+                temp_value = float(match.group(1))
+                if i in [0, 2, 4, 7, 9]:  # less than/below patterns (including < patterns)
+                    temperature_range = ("<", temp_value)
+                else:  # greater than/above patterns (including > patterns)
+                    temperature_range = (">", temp_value)
+                break
+
+        # Extract salinity thresholds
+        sal_patterns = [
+            r"salinity\s*(?:is\s*)?(?:less\s+than|below|under)\s*(\d+(?:\.\d+)?)",  # "salinity less than 35"
+            r"salinity\s*(?:is\s*)?(?:greater\s+than|above|over)\s*(\d+(?:\.\d+)?)", # "salinity greater than 35"
+            r"(?:where|with|having)\s+salinity\s*[<]\s*(\d+(?:\.\d+)?)", # "where salinity < 35"
+            r"(?:where|with|having)\s+salinity\s*[>]\s*(\d+(?:\.\d+)?)", # "where salinity > 35"
+        ]
+
+        for i, pattern in enumerate(sal_patterns):
+            match = re.search(pattern, query_lower)
+            if match:
+                sal_value = float(match.group(1))
+                if i in [0, 2]:  # less than/below patterns
+                    salinity_range = ("<", sal_value)
+                else:  # greater than/above patterns
+                    salinity_range = (">", sal_value)
+                break
+
+        return temperature_range, salinity_range
+
     def _extract_comparative_locations(self, query_lower: str) -> Optional[Tuple[str, Dict, str]]:
         """Extract multiple locations for comparative queries"""
         # Check for comparative patterns

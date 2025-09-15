@@ -599,30 +599,63 @@ class VectorStore:
         return self._search_internal(query_text, n_results, chroma_filters)
     
     def _search_internal(self, query: str, n_results: int = 10, filters: Dict = None) -> Dict:
-        """Enhanced search with analytics-aware filtering"""
+        """Enhanced search with robust filtering and fallback strategies"""
         try:
-            # If we have specific filters (from parameter context), use them directly
+            # If we have specific filters (from parameter context), try them with robust error handling
             if filters:
-                results = self.collection.query(
-                    query_texts=[query],
-                    n_results=n_results,
-                    where=filters
-                )
-                return results
-            
-            # First, try enhanced search with filtering
+                try:
+                    print(f"ChromaDB search with filters: {filters}")
+                    results = self.collection.query(
+                        query_texts=[query],
+                        n_results=n_results,
+                        where=filters
+                    )
+
+                    # If we got good results, return them
+                    if results.get('documents') and results['documents'][0] and len(results['documents'][0]) >= min(5, n_results // 2):
+                        print(f"Filtered search successful: {len(results['documents'][0])} documents")
+                        return results
+                    else:
+                        print(f"Filtered search returned few results ({len(results['documents'][0]) if results.get('documents') and results['documents'][0] else 0}), trying fallback")
+                except Exception as filter_error:
+                    print(f"Filtered search failed: {filter_error}, trying fallback strategies")
+
+            # Fallback strategy 1: Try enhanced search with single filters
+            try:
+                if filters and '$and' in filters:
+                    # Try each filter individually to see which works
+                    for single_filter in filters['$and']:
+                        try:
+                            results = self.collection.query(
+                                query_texts=[query],
+                                n_results=n_results,
+                                where=single_filter
+                            )
+                            if results.get('documents') and results['documents'][0]:
+                                print(f"Single filter search successful: {len(results['documents'][0])} documents with filter {single_filter}")
+                                return results
+                        except:
+                            continue
+            except:
+                pass
+
+            # Fallback strategy 2: Enhanced search with query-based filtering
             enhanced_results = self.enhanced_search(query, n_results)
             if enhanced_results['documents'][0]:  # If we got results
+                print(f"Enhanced search successful: {len(enhanced_results['documents'][0])} documents")
                 return enhanced_results
-            
-            # Fallback to basic search
+
+            # Fallback strategy 3: Basic semantic search without filters
+            print("Falling back to basic semantic search")
             results = self.collection.query(
                 query_texts=[query],
                 n_results=n_results
             )
+            print(f"Basic search returned: {len(results['documents'][0]) if results.get('documents') and results['documents'][0] else 0} documents")
             return results
+
         except Exception as e:
-            print(f"Vector store search failed: {e}")
+            print(f"Vector store search completely failed: {e}")
             # Return empty results structure
             return {
                 'documents': [[]],
@@ -676,15 +709,29 @@ class VectorStore:
                     where_filter['season'] = season
                     break
             
-            # Execute filtered search
+            # Execute filtered search - use only the most specific single filter to avoid operator issues
             if where_filter:
-                print(f"Enhanced search with filters: {where_filter}")
+                # Prioritize filters by specificity
+                primary_filter = None
+                if 'oceanic_region' in where_filter:
+                    primary_filter = {'oceanic_region': where_filter['oceanic_region']}
+                elif 'temperature_category' in where_filter:
+                    primary_filter = {'temperature_category': where_filter['temperature_category']}
+                elif 'suitable_for_temperature_analysis' in where_filter:
+                    primary_filter = {'suitable_for_temperature_analysis': where_filter['suitable_for_temperature_analysis']}
+                elif 'suitable_for_salinity_analysis' in where_filter:
+                    primary_filter = {'suitable_for_salinity_analysis': where_filter['suitable_for_salinity_analysis']}
+                else:
+                    # Use the first available filter
+                    primary_filter = {list(where_filter.keys())[0]: list(where_filter.values())[0]}
+
+                print(f"Enhanced search with primary filter: {primary_filter}")
                 results = self.collection.query(
                     query_texts=[query],
-                    n_results=min(n_results * 2, 20),  # Get more results to filter from
-                    where=where_filter
+                    n_results=min(n_results * 2, 50),  # Get more results to filter from
+                    where=primary_filter
                 )
-                
+
                 # If filtered search returns results, limit to requested number
                 if results['documents'][0]:
                     for key in results.keys():
