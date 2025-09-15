@@ -7,6 +7,7 @@ from typing import Dict, List, Tuple, Optional
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 from dotenv import load_dotenv
+from datetime import timedelta
 
 from database.database import ArgoMeasurement
 from analysis.oceanographic_intelligence import OceanographicIntelligence, AnalysisResult
@@ -186,11 +187,23 @@ class ChatbotService:
                 
                 # Debug: Log SQL query to check if it's filtering properly
                 print(f"DEBUG: Generated SQL query: {sql_query}")
+                print(f"DEBUG: Parameter context temperature_range: {parameter_context.temperature_range}")
+                print(f"DEBUG: Parameter context salinity_range: {parameter_context.salinity_range}")
                 print(f"DEBUG: Parameter context location: {parameter_context.location_name}")
                 print(f"DEBUG: Parameter context bounds: {parameter_context.location_bounds}")
                 print(f"DEBUG: Parameter context depth_range: {parameter_context.depth_range}")
                 print(f"DEBUG: Parameter context depth_type: {parameter_context.depth_type}")
                 print(f"DEBUG: Parameter extraction method: {getattr(parameter_context, 'extraction_method', 'unknown')}")
+                
+                # Check if temperature filter is in SQL
+                if parameter_context.temperature_range and sql_query:
+                    operator, temp_value = parameter_context.temperature_range
+                    expected_filter = f"temperature {operator} {temp_value}"
+                    if expected_filter in sql_query:
+                        print(f"DEBUG: ✓ Temperature filter '{expected_filter}' found in SQL")
+                    else:
+                        print(f"DEBUG: ✗ Temperature filter '{expected_filter}' NOT found in SQL")
+                        print(f"DEBUG: This will cause incorrect results!")
                 
                 if sql_query and self.sql_generator.validate_sql(sql_query):
                     # Log SQL generation
@@ -204,6 +217,26 @@ class ChatbotService:
                     execute_time = time.time() - execute_start
                     timing_data['sql_execution'] = execute_time
                     sql_used = sql_query
+                    
+                    # CRITICAL: Verify temperature filtering worked at SQL level
+                    if parameter_context.temperature_range and db_results:
+                        operator, temp_value = parameter_context.temperature_range
+                        violating_records = []
+                        for i, record in enumerate(db_results[:5]):  # Check first 5 records
+                            temp = record.get('temperature')
+                            if temp is not None:
+                                if operator == '>' and temp <= temp_value:
+                                    violating_records.append(f"Record {i}: {temp}°C <= {temp_value}°C")
+                                elif operator == '<' and temp >= temp_value:
+                                    violating_records.append(f"Record {i}: {temp}°C >= {temp_value}°C")
+                        
+                        if violating_records:
+                            print(f"DEBUG: ✗ SQL temperature filter FAILED! Found violations:")
+                            for violation in violating_records:
+                                print(f"DEBUG:   {violation}")
+                            print(f"DEBUG: Post-processing filter will be critical!")
+                        else:
+                            print(f"DEBUG: ✓ SQL temperature filter working correctly")
                     
                     # Track SQL generation and execution in pipeline flow
                     pipeline_flow["sql_generation"] = {
@@ -747,14 +780,17 @@ class ChatbotService:
                 where_conditions.append(f"latitude BETWEEN {bounds['lat_min']} AND {bounds['lat_max']}")
                 where_conditions.append(f"longitude BETWEEN {bounds['lon_min']} AND {bounds['lon_max']}")
 
-            # Temporal filter
+            # Temporal filter - use half-open intervals to include the entire end day
             if parameter_context.date_years:
-                year_conditions = [f"(date >= '{year}-01-01' AND date <= '{year}-12-31')" for year in parameter_context.date_years]
+                year_conditions = [
+                    f"(date >= '{year}-01-01' AND date < '{year + 1}-01-01')" for year in parameter_context.date_years
+                ]
                 where_conditions.append(f"({' OR '.join(year_conditions)})")
             elif parameter_context.date_range:
                 start_date, end_date = parameter_context.date_range
+                end_exclusive = (end_date + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
                 where_conditions.append(f"date >= '{start_date.isoformat()}'")
-                where_conditions.append(f"date <= '{end_date.isoformat()}'")
+                where_conditions.append(f"date < '{end_exclusive.isoformat()}'")
 
             # Depth filter
             if parameter_context.depth_range:

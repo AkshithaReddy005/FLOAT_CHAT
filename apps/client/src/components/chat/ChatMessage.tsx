@@ -19,16 +19,16 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
   isTyping = false,
   chatResponse
 }) => {
-  // Convert data to ArgoMeasurement format for visualization
+  // Convert data to ArgoMeasurement format for visualization - FIXED: Preserve null values
   const results: ArgoMeasurement[] = chatResponse?.data?.map((item: any, index: number) => ({
     float_id: String(item.float_id || item.id || `float_${index + 1}`),
-    latitude: Number(item.latitude || 0),
-    longitude: Number(item.longitude || 0),
+    latitude: item.latitude != null ? Number(item.latitude) : 0,
+    longitude: item.longitude != null ? Number(item.longitude) : 0,
     date: String(item.date || item.time || new Date().toISOString().split('T')[0]),
-    depth: Number(item.depth || 0),
-    temperature: Number(item.temperature || 0),
-    salinity: Number(item.salinity || 0),
-    pressure: Number(item.pressure || 0)
+    depth: item.depth != null ? Number(item.depth) : 0,
+    temperature: item.temperature != null ? Number(item.temperature) : null,
+    salinity: item.salinity != null ? Number(item.salinity) : null,
+    pressure: item.pressure != null ? Number(item.pressure) : null
   })) || [];
   return (
     <div className={`flex w-full mb-4 ${isUser ? 'justify-end' : 'justify-start'}`}>

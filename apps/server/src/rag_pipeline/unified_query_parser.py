@@ -60,11 +60,21 @@ class UnifiedQueryParser:
         
         query_id = str(uuid.uuid4())[:8]
         session_id = session_context.get('session_id') if session_context else None
+
+        # Force heuristic extraction for queries with clear threshold keywords
+        # to bypass potential LLM failures on these specific patterns.
+        query_lower = user_query.lower()
+        threshold_keywords = ["above", "below", "greater", "less", ">", "<", "under", "over"]
+        strategy = self.extraction_strategy
+
+        if strategy == "llm_first" and any(keyword in query_lower for keyword in threshold_keywords):
+            print(f"DEBUG: Threshold keyword detected. Forcing heuristic extraction for query: '{user_query}'")
+            strategy = "heuristic_only"
         
         # Strategy-based extraction
-        if self.extraction_strategy == "llm_first" and self.llm_extractor:
+        if strategy == "llm_first" and self.llm_extractor:
             extracted = self._extract_with_llm_first(user_query, session_context)
-        elif self.extraction_strategy == "llm_only" and self.llm_extractor:
+        elif strategy == "llm_only" and self.llm_extractor:
             extracted = self._extract_with_llm_only(user_query, session_context)
         else:
             extracted = self._extract_with_heuristics(user_query, session_context)
@@ -380,7 +390,7 @@ class UnifiedQueryParser:
         temperature_range = None
         salinity_range = None
 
-        # Extract temperature thresholds
+        # Extract temperature thresholds - FIXED: More flexible patterns
         temp_patterns = [
             r"temperature\s*(?:is\s*)?(?:less\s+than|below|under)\s*(\d+(?:\.\d+)?)\s*(?:degrees?|°)?c?",  # "temperature less than 20°C"
             r"temperature\s*(?:is\s*)?(?:greater\s+than|above|over)\s*(\d+(?:\.\d+)?)\s*(?:degrees?|°)?c?", # "temperature greater than 25°C"
@@ -392,6 +402,11 @@ class UnifiedQueryParser:
             r"temperature\s*[<]\s*(\d+(?:\.\d+)?)", # "temperature < 25"
             r"temps?\s*[>]\s*(\d+(?:\.\d+)?)", # "temp > 25"
             r"temps?\s*[<]\s*(\d+(?:\.\d+)?)", # "temp < 25"
+            # ADDED: More flexible patterns for common phrasings
+            r"(?:show|get|find).*?temperature\s+(?:above|over|greater\s+than)\s+(\d+(?:\.\d+)?)", # "Show temperature above 25"
+            r"(?:show|get|find).*?temperature\s+(?:below|under|less\s+than)\s+(\d+(?:\.\d+)?)", # "Show temperature below 20"
+            r"(?:show|get|find).*?temp\s+(?:above|over|greater\s+than)\s+(\d+(?:\.\d+)?)", # "Show temp above 25"
+            r"(?:show|get|find).*?temp\s+(?:below|under|less\s+than)\s+(\d+(?:\.\d+)?)", # "Show temp below 20"
         ]
 
         for i, pattern in enumerate(temp_patterns):
