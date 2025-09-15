@@ -82,6 +82,35 @@ class UnifiedQueryParser:
         else:
             extracted = self._extract_with_heuristics(user_query, session_context)
         
+        # Normalize date_range to datetime objects if LLM returned strings
+        def _to_datetime(val):
+            from datetime import datetime
+            if isinstance(val, datetime):
+                return val
+            if isinstance(val, str):
+                try:
+                    return datetime.fromisoformat(val.replace('Z', '+00:00'))
+                except Exception:
+                    # Try plain date without timezone
+                    try:
+                        return datetime.fromisoformat(val)
+                    except Exception:
+                        return None
+            return None
+        dr = extracted.get("date_range")
+        if dr and isinstance(dr, (list, tuple)):
+            d0 = _to_datetime(dr[0])
+            d1 = _to_datetime(dr[1])
+            if d0 and d1:
+                extracted["date_range"] = (d0, d1)
+                # If we have a concrete range (e.g., a month), drop date_years to avoid conflicts
+                if extracted.get("date_years"):
+                    try:
+                        if (d1 - d0).days < 370:  # treat as specific period, not whole year(s)
+                            extracted["date_years"] = None
+                    except Exception:
+                        extracted["date_years"] = None
+        
         # Create ParameterContext from extracted data
         return ParameterContext(
             original_query=user_query,
@@ -139,7 +168,19 @@ class UnifiedQueryParser:
         llm_result = self.llm_extractor.extract(user_query, session_context)
         
         if llm_result.get("extraction_method") in ["llm_structured"]:
-            # LLM succeeded, enhance with fuzzy region resolution
+            # LLM succeeded — but ensure month specificity isn't lost
+            query_lower = user_query.lower()
+            # If query has a Month Year but llm_result lacks a date_range, supplement heuristically
+            if (re.search(r"\b([a-zA-Z]{3,9})\s+([12][09][0-9]{2})\b", query_lower)
+                and not llm_result.get("date_range")):
+                try:
+                    date_range, date_years, temporal_type = self._extract_temporal(query_lower)
+                    if date_range:
+                        llm_result["date_range"] = date_range
+                        llm_result["temporal_type"] = temporal_type or llm_result.get("temporal_type")
+                except Exception as e:
+                    print(f"LLM-first month supplement failed, proceeding without: {e}")
+            # Enhance with region resolver as usual
             return self._enhance_with_region_resolver(llm_result, user_query)
         else:
             # LLM failed, use heuristics
@@ -346,7 +387,28 @@ class UnifiedQueryParser:
                 end_year = max(year1, year2)
                 return (datetime(start_year, 1, 1), datetime(end_year, 12, 31)), None, "range"
 
-        # 3) Single year
+        # 3) Month with year: "March 2023", "Mar 2023" (must come BEFORE single year)
+        m = re.search(r"\b([a-zA-Z]{3,9})\s+([12][09][0-9]{2})\b", query_lower)
+        if m:
+            mon, yr = m.group(1), int(m.group(2))
+            mn = month_num(mon)
+            if mn:
+                # Use inclusive end-of-month for consistency with SQL generator (which adds +1 day)
+                end_inclusive = end_of_month_exclusive(yr, mn) - timedelta(days=1)
+                return (start_of_month(yr, mn), end_inclusive), None, "month"
+
+        # 4) Month range possibly across years: "Jan 2022 to Mar 2023"
+        m2 = re.search(r"\b([a-zA-Z]{3,9})\s+([12][09][0-9]{2})\s*(?:to|-)\s*([a-zA-Z]{3,9})\s+([12][09][0-9]{2})\b", query_lower)
+        if m2:
+            m1s, y1s, m2s, y2s = m2.groups()
+            y1, y2 = int(y1s), int(y2s)
+            mn1, mn2 = month_num(m1s), month_num(m2s)
+            if mn1 and mn2:
+                start = start_of_month(y1, mn1)
+                end_inclusive = end_of_month_exclusive(y2, mn2) - timedelta(days=1)
+                return (start, end_inclusive), None, "month_range"
+
+        # 5) Single year (after month patterns to avoid swallowing month-specific queries)
         single_year_patterns = [
             r"(?:in|for|during)\s+([12][09][0-9]{2})",
             r"year\s+([12][09][0-9]{2})",
@@ -357,25 +419,6 @@ class UnifiedQueryParser:
             if match:
                 year = int(match.group(1))
                 return (datetime(year, 1, 1), datetime(year, 12, 31)), None, "single_year"
-
-        # 4) Month with year: "March 2023", "Mar 2023"
-        m = re.search(r"\b([a-zA-Z]{3,9})\s+([12][09][0-9]{2})\b", query_lower)
-        if m:
-            mon, yr = m.group(1), int(m.group(2))
-            mn = month_num(mon)
-            if mn:
-                return (start_of_month(yr, mn), end_of_month_exclusive(yr, mn)), None, "month"
-
-        # 5) Month range possibly across years: "Jan 2022 to Mar 2023"
-        m2 = re.search(r"\b([a-zA-Z]{3,9})\s+([12][09][0-9]{2})\s*(?:to|-)\s*([a-zA-Z]{3,9})\s+([12][09][0-9]{2})\b", query_lower)
-        if m2:
-            m1s, y1s, m2s, y2s = m2.groups()
-            y1, y2 = int(y1s), int(y2s)
-            mn1, mn2 = month_num(m1s), month_num(m2s)
-            if mn1 and mn2:
-                start = start_of_month(y1, mn1)
-                end_excl = end_of_month_exclusive(y2, mn2)
-                return (start, end_excl - timedelta(days=1)), None, "month_range"
 
         # 6) Quarter handling: Q1 2023, first quarter 2023
         q = re.search(r"\bq([1-4])\s+([12][09][0-9]{2})\b", query_lower)
