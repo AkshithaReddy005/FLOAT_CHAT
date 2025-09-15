@@ -1198,6 +1198,174 @@ def reinitialize_connections():
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to reinitialize: {str(e)}")
 
+@app.post("/researcher/download-data")
+def download_query_data(request: QueryRequest, db: Session = Depends(get_db)):
+    """Download query results as CSV file"""
+    try:
+        from io import StringIO
+        import csv
+        from fastapi.responses import StreamingResponse
+        
+        # Execute the same query logic as the main query endpoint
+        from rag_pipeline.unified_query_parser import UnifiedQueryParser
+        from rag_pipeline.sql_generator import SQLGenerator
+        
+        # Parse query parameters
+        parser = UnifiedQueryParser()
+        parameter_context = parser.parse_query(request.query)
+        
+        # Generate and execute SQL
+        sql_generator = SQLGenerator()
+        sql_query = sql_generator.generate_sql_from_context(parameter_context)
+        
+        # Execute query
+        results = db.execute(text(sql_query)).fetchall()
+        
+        # Create CSV content
+        output = StringIO()
+        writer = csv.writer(output)
+        
+        # Write headers
+        headers = ['float_id', 'latitude', 'longitude', 'date', 'depth', 'temperature', 'salinity', 'pressure']
+        writer.writerow(headers)
+        
+        # Write data rows
+        for row in results:
+            writer.writerow([
+                row.float_id,
+                row.latitude,
+                row.longitude,
+                row.date.isoformat() if row.date else '',
+                row.depth,
+                row.temperature,
+                row.salinity,
+                row.pressure
+            ])
+        
+        # Prepare response
+        output.seek(0)
+        
+        # Generate filename with timestamp
+        from datetime import datetime
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"argo_data_{timestamp}.csv"
+        
+        return StreamingResponse(
+            iter([output.getvalue()]),
+            media_type="text/csv",
+            headers={"Content-Disposition": f"attachment; filename={filename}"}
+        )
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to download data: {str(e)}")
+
+@app.post("/export/query-csv")
+def export_query_csv(request: QueryRequest, db: Session = Depends(get_db)):
+    """Export query results as CSV (alternative endpoint)"""
+    try:
+        from io import StringIO
+        import csv
+        from fastapi.responses import StreamingResponse
+        
+        # Execute the same query logic as the main query endpoint
+        from rag_pipeline.unified_query_parser import UnifiedQueryParser
+        from rag_pipeline.sql_generator import SQLGenerator
+        
+        # Parse query parameters
+        parser = UnifiedQueryParser()
+        parameter_context = parser.parse_query(request.query)
+        
+        # Generate and execute SQL
+        sql_generator = SQLGenerator()
+        sql_query = sql_generator.generate_sql_from_context(parameter_context)
+        
+        # Execute query
+        results = db.execute(text(sql_query)).fetchall()
+        
+        # Create CSV content
+        output = StringIO()
+        writer = csv.writer(output)
+        
+        # Write headers
+        headers = ['float_id', 'latitude', 'longitude', 'date', 'depth', 'temperature', 'salinity', 'pressure']
+        writer.writerow(headers)
+        
+        # Write data rows
+        for row in results:
+            writer.writerow([
+                row.float_id,
+                row.latitude,
+                row.longitude,
+                row.date.isoformat() if row.date else '',
+                row.depth,
+                row.temperature,
+                row.salinity,
+                row.pressure
+            ])
+        
+        # Prepare response
+        output.seek(0)
+        
+        # Generate filename with timestamp
+        from datetime import datetime
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"argo_data_{timestamp}.csv"
+        
+        return StreamingResponse(
+            iter([output.getvalue()]),
+            media_type="text/csv",
+            headers={"Content-Disposition": f"attachment; filename={filename}"}
+        )
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to export CSV: {str(e)}")
+
+@app.get("/researcher/export-chat/{session_id}")
+def export_chat_session(session_id: str):
+    """Export chat session as JSON file"""
+    try:
+        from fastapi.responses import StreamingResponse
+        import json
+        from datetime import datetime
+        
+        # For now, we'll create a basic export structure
+        # In a full implementation, you'd retrieve actual session data from storage
+        chat_export = {
+            "session_id": session_id,
+            "export_timestamp": datetime.now().isoformat(),
+            "queries": [
+                # This would be populated from actual session storage
+                {
+                    "timestamp": datetime.now().isoformat(),
+                    "query": "Sample query for export",
+                    "results_count": 0,
+                    "parameters_extracted": {},
+                    "visualization_type": "table"
+                }
+            ],
+            "metadata": {
+                "total_queries": 0,
+                "session_duration": "0 minutes",
+                "data_sources": ["PostgreSQL", "ChromaDB"]
+            }
+        }
+        
+        # Convert to JSON string
+        json_content = json.dumps(chat_export, indent=2)
+        
+        # Generate filename
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"floatchat_session_{session_id}_{timestamp}.json"
+        
+        return StreamingResponse(
+            iter([json_content]),
+            media_type="application/json",
+            headers={"Content-Disposition": f"attachment; filename={filename}"}
+        )
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to export chat: {str(e)}")
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host=BACKEND_HOST, port=BACKEND_PORT)
