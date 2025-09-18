@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Trash2, Waves } from 'lucide-react';
+import { Trash2, Waves, BarChart3 } from 'lucide-react';
 import { ChatMessage } from './ChatMessage';
 import { ChatInput } from './ChatInput';
 import { SessionContextManager } from '../../services/sessionContext';
@@ -32,6 +32,7 @@ interface ChatInterfaceProps {
   onResponse: (response: ChatResponse) => void;
   isLoading: boolean;
   onSendMessage: (message: string, context?: APIContext) => Promise<void>;
+  onAnalyticsClick?: () => void;
 }
 
 export interface ChatInterfaceRef {
@@ -41,7 +42,8 @@ export interface ChatInterfaceRef {
 export const ChatInterface = React.forwardRef<ChatInterfaceRef, ChatInterfaceProps>(({
   onResponse,
   isLoading,
-  onSendMessage
+  onSendMessage,
+  onAnalyticsClick
 }, ref) => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [showTyping, setShowTyping] = useState(false);
@@ -154,15 +156,26 @@ export const ChatInterface = React.forwardRef<ChatInterfaceRef, ChatInterfacePro
             </div>
           </div>
           
-          {messages.length > 0 && (
-            <button
-              onClick={clearConversation}
-              className="flex items-center space-x-1 text-sm text-gray-500 hover:text-gray-700 px-3 py-1 rounded-lg hover:bg-gray-100 transition-colors"
-            >
-              <Trash2 className="w-4 h-4" />
-              <span>Clear</span>
-            </button>
-          )}
+          <div className="flex items-center space-x-2">
+            {onAnalyticsClick && (
+              <button
+                onClick={onAnalyticsClick}
+                className="flex items-center space-x-1 text-sm text-blue-600 hover:text-blue-800 px-3 py-1 rounded-lg hover:bg-blue-50 transition-colors"
+              >
+                <BarChart3 className="w-4 h-4" />
+                <span>View Detailed Analytics</span>
+              </button>
+            )}
+            {messages.length > 0 && (
+              <button
+                onClick={clearConversation}
+                className="flex items-center space-x-1 text-sm text-gray-500 hover:text-gray-700 px-3 py-1 rounded-lg hover:bg-gray-100 transition-colors"
+              >
+                <Trash2 className="w-4 h-4" />
+                <span>Clear</span>
+              </button>
+            )}
+          </div>
         </div>
       </div>
 

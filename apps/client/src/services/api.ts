@@ -121,6 +121,14 @@ class ApiService {
       method: 'GET',
     });
   }
+
+  async getUserAnalytics(): Promise<any> {
+    return this.makeRequest<any>('/user/analytics', {
+      method: 'GET',
+    });
+  }
 }
+
+
 
 export const apiService = new ApiService();

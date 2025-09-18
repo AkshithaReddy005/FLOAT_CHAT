@@ -1,7 +1,8 @@
-import React, { useRef, useCallback } from 'react';
+import React, { useRef, useCallback, useState } from 'react';
 import { Layout } from '../common/Layout';
 import { ErrorBoundary } from '../common/ErrorBoundary';
 import { ChatInterface, type ChatInterfaceRef } from '../chat/ChatInterface';
+import { UserAnalytics } from './ResearcherAnalytics';
 import { useChatQuery } from '../../hooks/useChatQuery';
 import type { ChatResponse } from '../../types';
 
@@ -23,6 +24,7 @@ interface APIContext {
 export const ChatDashboard: React.FC = () => {
   const chatInterfaceRef = useRef<ChatInterfaceRef>(null);
   const {isLoading, error, chatWithContext } = useChatQuery();
+  const [showAnalytics, setShowAnalytics] = useState(false);
 
   // Handle sending messages to the API
   const handleSendMessage = useCallback(async (message: string, context?: APIContext) => {
@@ -41,6 +43,16 @@ export const ChatDashboard: React.FC = () => {
   const handleResponse = useCallback((response: ChatResponse) => {
     // Additional response handling can go here if needed in the future
     console.log('Response received:', response);
+  }, []);
+
+  // Handle analytics button click
+  const handleAnalyticsClick = useCallback(() => {
+    setShowAnalytics(true);
+  }, []);
+
+  // Handle closing analytics
+  const handleCloseAnalytics = useCallback(() => {
+    setShowAnalytics(false);
   }, []);
 
   return (
@@ -62,6 +74,7 @@ export const ChatDashboard: React.FC = () => {
                 onResponse={handleResponse}
                 isLoading={isLoading}
                 onSendMessage={handleSendMessage}
+                onAnalyticsClick={handleAnalyticsClick}
               />
             </ErrorBoundary>
           </div>
@@ -83,7 +96,11 @@ export const ChatDashboard: React.FC = () => {
           )}
         </div>
       </Layout>
+
+      {/* Analytics Modal */}
+      {showAnalytics && (
+        <UserAnalytics onClose={handleCloseAnalytics} />
+      )}
     </ErrorBoundary>
   );
-}
-;
+};

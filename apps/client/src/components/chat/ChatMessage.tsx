@@ -26,9 +26,9 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
     longitude: item.longitude != null ? Number(item.longitude) : 0,
     date: String(item.date || item.time || new Date().toISOString().split('T')[0]),
     depth: item.depth != null ? Number(item.depth) : 0,
-    temperature: item.temperature != null ? Number(item.temperature) : null,
-    salinity: item.salinity != null ? Number(item.salinity) : null,
-    pressure: item.pressure != null ? Number(item.pressure) : null
+    temperature: item.temperature != null ? Number(item.temperature) : 0,
+    salinity: item.salinity != null ? Number(item.salinity) : 0,
+    pressure: item.pressure != null ? Number(item.pressure) : 0
   })) || [];
   return (
     <div className={`flex w-full mb-4 ${isUser ? 'justify-end' : 'justify-start'}`}>
