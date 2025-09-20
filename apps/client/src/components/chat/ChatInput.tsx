@@ -105,12 +105,6 @@ export const ChatInput: React.FC<ChatInputProps> = ({
         <span>
           Press Enter to send, Shift+Enter for new line
         </span>
-        {disabled && (
-          <span className="text-blue-600 flex items-center">
-            <div className="w-3 h-3 border border-blue-600 border-t-transparent rounded-full animate-spin mr-1" />
-            Processing...
-          </span>
-        )}
       </div>
     </form>
   );

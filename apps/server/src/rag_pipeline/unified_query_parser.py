@@ -14,6 +14,13 @@ from .parameter_context import ParameterContext
 from .param_extractors.llm_extractor import LLMParameterExtractor
 from .param_extractors.region_resolver import RegionResolver
 
+# Location intelligence integration
+try:
+    from ..analysis.location_intelligence import LocationIntelligence
+    LOCATION_INTELLIGENCE_AVAILABLE = True
+except ImportError:
+    LOCATION_INTELLIGENCE_AVAILABLE = False
+
 
 class UnifiedQueryParser:
     """
@@ -24,14 +31,17 @@ class UnifiedQueryParser:
     def __init__(self, gemini_api_key: str = None, extraction_strategy: str = "llm_first"):
         """
         Initialize parser with configurable extraction strategy
-        
+
         Args:
             gemini_api_key: API key for LLM extraction
             extraction_strategy: "llm_first", "heuristic_only", or "llm_only"
         """
         self.extraction_strategy = extraction_strategy
         self.region_resolver = RegionResolver()
-        
+
+        # Initialize location intelligence
+        self.location_intel = LocationIntelligence() if LOCATION_INTELLIGENCE_AVAILABLE else None
+
         # Initialize LLM extractor if API key provided
         self.llm_extractor = None
         if gemini_api_key and extraction_strategy in ["llm_first", "llm_only"]:
@@ -49,6 +59,10 @@ class UnifiedQueryParser:
             "indian ocean": {"lat_min": -40, "lat_max": 30, "lon_min": 20, "lon_max": 120},
             "northern arabian sea": {"lat_min": 20, "lat_max": 25, "lon_min": 65, "lon_max": 75},
             "southern arabian sea": {"lat_min": 10, "lat_max": 20, "lon_min": 65, "lon_max": 75},
+            "western indian ocean": {"lat_min": -30, "lat_max": 30, "lon_min": 20, "lon_max": 70},  # Added western Indian Ocean
+            "eastern indian ocean": {"lat_min": -30, "lat_max": 30, "lon_min": 70, "lon_max": 120},  # Added eastern Indian Ocean
+            "northern indian ocean": {"lat_min": 0, "lat_max": 30, "lon_min": 40, "lon_max": 100},   # Added northern Indian Ocean
+            "southern indian ocean": {"lat_min": -40, "lat_max": 0, "lon_min": 20, "lon_max": 120},  # Added southern Indian Ocean
             "coastal": {"lat_min": 18, "lat_max": 22, "lon_min": 70, "lon_max": 74},
             "offshore": {"lat_min": 15, "lat_max": 25, "lon_min": 65, "lon_max": 72}
         }
@@ -112,7 +126,8 @@ class UnifiedQueryParser:
                         extracted["date_years"] = None
         
         # Create ParameterContext from extracted data
-        return ParameterContext(
+        # Create temporary context for location enhancement
+        temp_context = ParameterContext(
             original_query=user_query,
             query_id=query_id,
             session_id=session_id,
@@ -136,6 +151,38 @@ class UnifiedQueryParser:
             extraction_method=extracted.get("extraction_method", "unknown"),
             confidence_score=extracted.get("confidence_score", 0.5)
         )
+
+        # Get enhanced location context before final creation
+        enhanced_location_context = self._get_enhanced_location_context(temp_context)
+
+        # Create final ParameterContext with enhanced location intelligence
+        param_context = ParameterContext(
+            original_query=user_query,
+            query_id=query_id,
+            session_id=session_id,
+            location_name=extracted.get("location_name"),
+            location_bounds=extracted.get("location_bounds"),
+            coordinate_precision=extracted.get("coordinate_precision", "approximate"),
+            location_context=enhanced_location_context,
+            date_range=extracted.get("date_range"),
+            date_years=extracted.get("date_years"),
+            temporal_type=extracted.get("temporal_type"),
+            depth_range=extracted.get("depth_range"),
+            depth_type=extracted.get("depth_type"),
+            float_ids=extracted.get("float_ids"),
+            parameters=extracted.get("parameters"),
+            temperature_range=extracted.get("temperature_range"),  # FIXED: Add temperature threshold
+            salinity_range=extracted.get("salinity_range"),        # FIXED: Add salinity threshold
+            is_analytical=extracted.get("is_analytical", False),
+            is_comparative=extracted.get("is_comparative", False),
+            is_chart_request=extracted.get("is_chart_request", False),
+            complexity_level=extracted.get("complexity_level", "simple"),
+            session_context=session_context,
+            extraction_method=extracted.get("extraction_method", "unknown"),
+            confidence_score=extracted.get("confidence_score", 0.5)
+        )
+
+        return param_context
 
     def _contains_threshold_keyword(self, query_lower: str, keywords: List[str]) -> bool:
         """Detect threshold keywords with tolerance to common typos.
@@ -229,8 +276,8 @@ class UnifiedQueryParser:
             "depth_type": depth_type,
             "float_ids": float_ids,
             "parameters": parameters,
-            "temperature_range": temperature_range,  # FIXED: Add temperature threshold
-            "salinity_range": salinity_range,        # FIXED: Add salinity threshold
+            "temperature_range": temperature_range,  
+            "salinity_range": salinity_range,        
             "is_analytical": is_analytical,
             "is_comparative": is_comparative,
             "is_chart_request": is_chart_request,
@@ -256,11 +303,15 @@ class UnifiedQueryParser:
     
     def _extract_location(self, query_lower: str, session_context: Optional[Dict] = None) -> Tuple[Optional[str], Optional[Dict], Optional[str]]:
         """Extract location parameters with session context support"""
-        
-        # Check for comparative location queries first
-        comparative_locations = self._extract_comparative_locations(query_lower)
-        if comparative_locations:
-            return comparative_locations
+
+        # CRITICAL FIX: Only check for comparative queries if there are actual comparison keywords
+        # Don't treat "locations with temperatures higher than X" as comparative
+        has_comparison_keywords = any(word in query_lower for word in ['vs', 'versus', 'compare', 'comparison', 'difference between'])
+
+        if has_comparison_keywords:
+            comparative_locations = self._extract_comparative_locations(query_lower)
+            if comparative_locations:
+                return comparative_locations
         
         # Direct coordinate patterns (highest precision)
         coordinate_patterns = [
@@ -289,11 +340,13 @@ class UnifiedQueryParser:
                     location_name = f"point_{lat}N_{lon}E"
                     return location_name, bounds, "exact"
         
-        # Named location patterns
+        # Named location patterns - ordered from most specific to least specific
         location_patterns = [
             r"mumbai", r"bombay",
-            r"arabian\s+sea", r"indian\s+ocean",
+            r"western\s+indian\s+ocean", r"eastern\s+indian\s+ocean",
+            r"northern\s+indian\s+ocean", r"southern\s+indian\s+ocean",
             r"northern\s+arabian\s+sea", r"southern\s+arabian\s+sea",
+            r"arabian\s+sea", r"indian\s+ocean",
             r"coastal", r"offshore",
             r"near\s+([a-zA-Z\s]+?)(?:\s|$)",
             r"in\s+([a-zA-Z\s]+?)(?:\s|$)",
@@ -305,14 +358,22 @@ class UnifiedQueryParser:
             if match:
                 if pattern in [r"mumbai", r"bombay"]:
                     location_name = "mumbai"
-                elif pattern == r"arabian\s+sea":
-                    location_name = "arabian sea"
-                elif pattern == r"indian\s+ocean":
-                    location_name = "indian ocean"
+                elif pattern == r"western\s+indian\s+ocean":
+                    location_name = "western indian ocean"
+                elif pattern == r"eastern\s+indian\s+ocean":
+                    location_name = "eastern indian ocean"
+                elif pattern == r"northern\s+indian\s+ocean":
+                    location_name = "northern indian ocean"
+                elif pattern == r"southern\s+indian\s+ocean":
+                    location_name = "southern indian ocean"
                 elif pattern == r"northern\s+arabian\s+sea":
                     location_name = "northern arabian sea"
                 elif pattern == r"southern\s+arabian\s+sea":
                     location_name = "southern arabian sea"
+                elif pattern == r"arabian\s+sea":
+                    location_name = "arabian sea"
+                elif pattern == r"indian\s+ocean":
+                    location_name = "indian ocean"
                 elif pattern in [r"coastal", r"offshore"]:
                     location_name = match.group(0)
                 else:
@@ -502,35 +563,10 @@ class UnifiedQueryParser:
         return None, None, None
     
     def _extract_depth(self, query_lower: str, session_context: Optional[Dict] = None) -> Tuple[Optional[Tuple[Any, Any]], Optional[str]]:
-        """Extract depth parameters with operator and range support"""
-        
-        depth_patterns = [
-            (r"below\s*(\d+)\s*m", ">=", "operator"),
-            (r"above\s*(\d+)\s*m", "<=", "operator"),
-            (r"deeper\s*than\s*(\d+)", ">=", "operator"),
-            (r"shallower\s*than\s*(\d+)", "<=", "operator"),
-            (r"greater\s*than\s*(\d+)\s*m", ">=", "operator"),
-            (r"less\s*than\s*(\d+)\s*m", "<=", "operator"),
-            (r"depths?\s+greater\s+than\s*(\d+)\s*m", ">=", "operator"),
-            (r"depths?\s+less\s+than\s*(\d+)\s*m", "<=", "operator"),
-            (r"at\s*(\d+)\s*m", None, "exact"),
-            (r"depth\s*(\d+)", None, "range"),
-            (r"(\d+)\s*m.*deep", None, "range"),
-        ]
-        
-        for pattern, operator, depth_type in depth_patterns:
-            match = re.search(pattern, query_lower)
-            if match:
-                depth = float(match.group(1))
-                
-                if depth_type == "operator":
-                    return (operator, depth), "operator"
-                elif depth_type == "exact":
-                    return (depth - 1, depth + 1), "range"  # ±1m for exact depth
-                else:  # range
-                    return (depth - 50, depth + 50), "range"  # ±50m for general depth mentions
-        
-        return None, None
+        """Extract depth parameters with operator and range support using unified patterns"""
+        from .extraction_patterns import extract_depth_threshold
+
+        return extract_depth_threshold(query_lower)
     
     def _extract_float_ids(self, query_lower: str) -> Optional[List[str]]:
         """Extract float IDs from query"""
@@ -570,56 +606,17 @@ class UnifiedQueryParser:
         return parameters if parameters else None
 
     def _extract_parameter_thresholds(self, query_lower: str) -> Tuple[Optional[Tuple], Optional[Tuple]]:
-        """Extract temperature and salinity threshold filters"""
-        temperature_range = None
-        salinity_range = None
+        """Extract temperature and salinity threshold filters using unified patterns"""
+        # Import the unified extraction functions
+        from .extraction_patterns import extract_temperature_threshold, extract_salinity_threshold
 
-        # Extract temperature thresholds - FIXED: More flexible patterns
-        temp_patterns = [
-            r"temperature\s*(?:is\s*)?(?:less\s+than|below|under)\s*(\d+(?:\.\d+)?)\s*(?:degrees?|°)?c?",  # "temperature less than 20°C"
-            r"temperature\s*(?:is\s*)?(?:greater\s+than|above|over)\s*(\d+(?:\.\d+)?)\s*(?:degrees?|°)?c?", # "temperature greater than 25°C"
-            r"temps?\s*(?:less\s+than|below|under)\s*(\d+(?:\.\d+)?)\s*(?:degrees?|°)?c?",  # "temp below 20°C"
-            r"temps?\s*(?:greater\s+than|above|over)\s*(\d+(?:\.\d+)?)\s*(?:degrees?|°)?c?", # "temp above 25°C"
-            r"(?:where|with|having)\s+temperature\s*[<]\s*(\d+(?:\.\d+)?)", # "where temperature < 20"
-            r"(?:where|with|having)\s+temperature\s*[>]\s*(\d+(?:\.\d+)?)", # "where temperature > 20"
-            r"temperature\s*[>]\s*(\d+(?:\.\d+)?)", # "temperature > 25"
-            r"temperature\s*[<]\s*(\d+(?:\.\d+)?)", # "temperature < 25"
-            r"temps?\s*[>]\s*(\d+(?:\.\d+)?)", # "temp > 25"
-            r"temps?\s*[<]\s*(\d+(?:\.\d+)?)", # "temp < 25"
-            # ADDED: More flexible patterns for common phrasings
-            r"(?:show|get|find).*?temperature\s+(?:above|over|greater\s+than)\s+(\d+(?:\.\d+)?)", # "Show temperature above 25"
-            r"(?:show|get|find).*?temperature\s+(?:below|under|less\s+than)\s+(\d+(?:\.\d+)?)", # "Show temperature below 20"
-            r"(?:show|get|find).*?temp\s+(?:above|over|greater\s+than)\s+(\d+(?:\.\d+)?)", # "Show temp above 25"
-            r"(?:show|get|find).*?temp\s+(?:below|under|less\s+than)\s+(\d+(?:\.\d+)?)", # "Show temp below 20"
-        ]
+        temperature_range = extract_temperature_threshold(query_lower)
+        salinity_range = extract_salinity_threshold(query_lower)
 
-        for i, pattern in enumerate(temp_patterns):
-            match = re.search(pattern, query_lower)
-            if match:
-                temp_value = float(match.group(1))
-                if i in [0, 2, 4, 7, 9]:  # less than/below patterns (including < patterns)
-                    temperature_range = ("<", temp_value)
-                else:  # greater than/above patterns (including > patterns)
-                    temperature_range = (">", temp_value)
-                break
-
-        # Extract salinity thresholds
-        sal_patterns = [
-            r"salinity\s*(?:is\s*)?(?:less\s+than|below|under)\s*(\d+(?:\.\d+)?)",  # "salinity less than 35"
-            r"salinity\s*(?:is\s*)?(?:greater\s+than|above|over)\s*(\d+(?:\.\d+)?)", # "salinity greater than 35"
-            r"(?:where|with|having)\s+salinity\s*[<]\s*(\d+(?:\.\d+)?)", # "where salinity < 35"
-            r"(?:where|with|having)\s+salinity\s*[>]\s*(\d+(?:\.\d+)?)", # "where salinity > 35"
-        ]
-
-        for i, pattern in enumerate(sal_patterns):
-            match = re.search(pattern, query_lower)
-            if match:
-                sal_value = float(match.group(1))
-                if i in [0, 2]:  # less than/below patterns
-                    salinity_range = ("<", sal_value)
-                else:  # greater than/above patterns
-                    salinity_range = (">", sal_value)
-                break
+        if temperature_range:
+            print(f"DEBUG: Temperature threshold extracted: {temperature_range}")
+        if salinity_range:
+            print(f"DEBUG: Salinity threshold extracted: {salinity_range}")
 
         return temperature_range, salinity_range
 
@@ -763,3 +760,69 @@ class UnifiedQueryParser:
         fallback_params['complexity_level'] = original_context.complexity_level
         
         return ParameterContext(**fallback_params)
+
+    def _get_enhanced_location_context(self, param_context: 'ParameterContext') -> Optional[Dict[str, Any]]:
+        """Get enhanced location context for RAG system"""
+        if not param_context.location_bounds:
+            return None
+
+        # Get center coordinates of the location bounds
+        bounds = param_context.location_bounds
+        center_lat = (bounds['lat_min'] + bounds['lat_max']) / 2
+        center_lon = (bounds['lon_min'] + bounds['lon_max']) / 2
+
+        # Get depth context if available
+        depth = None
+        if param_context.depth_range:
+            if isinstance(param_context.depth_range, tuple) and len(param_context.depth_range) == 2:
+                if isinstance(param_context.depth_range[0], (int, float)):
+                    depth = (param_context.depth_range[0] + param_context.depth_range[1]) / 2
+                elif param_context.depth_range[0] in ['>', '>=']:
+                    depth = param_context.depth_range[1] + 100  # Assume some depth below threshold
+                elif param_context.depth_range[0] in ['<', '<=']:
+                    depth = max(0, param_context.depth_range[1] - 50)  # Assume some depth above threshold
+
+        # Use location intelligence if available
+        if self.location_intel:
+            return self.location_intel.get_location_based_context(center_lat, center_lon, depth)
+        else:
+            # Fallback to basic context
+            return {
+                'coordinates': f"{center_lat:.2f}°, {center_lon:.2f}°",
+                'ocean_basin': self._basic_ocean_classification(center_lat, center_lon),
+                'oceanographic_region': self._basic_oceanographic_region(center_lat),
+                'depth_context': self._basic_depth_context(depth) if depth else None
+            }
+
+    def _basic_ocean_classification(self, lat: float, lon: float) -> str:
+        """Basic ocean classification fallback"""
+        if 0 <= lat <= 30 and 50 <= lon <= 80:
+            return "Arabian Sea"
+        elif 5 <= lat <= 25 and 80 <= lon <= 100:
+            return "Bay of Bengal"
+        elif lat < 0:
+            return "Southern Indian Ocean"
+        else:
+            return "Northern Indian Ocean"
+
+    def _basic_oceanographic_region(self, lat: float) -> str:
+        """Basic oceanographic region classification"""
+        if -5 <= lat <= 5:
+            return "Equatorial"
+        elif abs(lat) <= 23.5:
+            return "Tropical"
+        elif abs(lat) <= 35:
+            return "Subtropical"
+        else:
+            return "Temperate"
+
+    def _basic_depth_context(self, depth: float) -> str:
+        """Basic depth context"""
+        if depth < 100:
+            return "surface mixed layer"
+        elif depth < 500:
+            return "intermediate waters"
+        elif depth < 1000:
+            return "deep waters"
+        else:
+            return "abyssal depths"

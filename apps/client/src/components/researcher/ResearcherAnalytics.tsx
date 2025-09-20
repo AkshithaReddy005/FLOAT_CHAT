@@ -238,8 +238,16 @@ export const UserAnalytics: React.FC<UserAnalyticsProps> = ({ onClose }) => {
             </h3>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               {data.geographic_distribution.map((region, index) => (
-                <div key={index} className="bg-gray-50 rounded-lg p-4">
-                  <h4 className="font-semibold text-gray-800 mb-2">{region.region}</h4>
+                <div key={index} className="bg-gray-50 rounded-lg p-4 border-l-4 border-blue-400">
+                  <div className="flex items-start justify-between mb-2">
+                    <h4 className="font-semibold text-gray-800 flex-1">{region.region}</h4>
+                    {region.enhanced_location_info?.oceanographic_region && (
+                      <span className="px-2 py-1 bg-blue-100 text-blue-700 text-xs rounded-full ml-2">
+                        {region.enhanced_location_info.oceanographic_region}
+                      </span>
+                    )}
+                  </div>
+
                   <div className="space-y-1 text-sm">
                     <div className="flex justify-between">
                       <span className="text-gray-600">Measurements:</span>
@@ -249,6 +257,14 @@ export const UserAnalytics: React.FC<UserAnalyticsProps> = ({ onClose }) => {
                       <span className="text-gray-600">Floats:</span>
                       <span className="font-medium">{region.float_count}</span>
                     </div>
+
+                    {region.enhanced_location_info?.data_density && (
+                      <div className="flex justify-between">
+                        <span className="text-gray-600">Data Density:</span>
+                        <span className="font-medium">{region.enhanced_location_info.data_density} pts/deg²</span>
+                      </div>
+                    )}
+
                     {region.lat_range && (
                       <div className="flex justify-between">
                         <span className="text-gray-600">Latitude:</span>
@@ -259,6 +275,43 @@ export const UserAnalytics: React.FC<UserAnalyticsProps> = ({ onClose }) => {
                       <div className="flex justify-between">
                         <span className="text-gray-600">Longitude:</span>
                         <span className="font-medium">{region.lon_range[0].toFixed(1)}° to {region.lon_range[1].toFixed(1)}°</span>
+                      </div>
+                    )}
+
+                    {/* Enhanced location information */}
+                    {region.enhanced_location_info && (
+                      <div className="mt-3 pt-2 border-t border-gray-200">
+                        {region.enhanced_location_info.circulation_feature && (
+                          <div className="flex justify-between">
+                            <span className="text-gray-600">Circulation:</span>
+                            <span className="font-medium text-blue-600 text-xs">
+                              {region.enhanced_location_info.circulation_feature}
+                            </span>
+                          </div>
+                        )}
+
+                        {region.enhanced_location_info.oceanographic_features &&
+                         region.enhanced_location_info.oceanographic_features.length > 0 && (
+                          <div className="mt-1">
+                            <span className="text-gray-600 text-xs">Features:</span>
+                            <div className="flex flex-wrap gap-1 mt-1">
+                              {region.enhanced_location_info.oceanographic_features.slice(0, 2).map((feature, idx) => (
+                                <span key={idx} className="px-1.5 py-0.5 bg-green-100 text-green-700 text-xs rounded">
+                                  {feature}
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {region.enhanced_location_info.coordinates_center && (
+                          <div className="flex justify-between mt-1">
+                            <span className="text-gray-600">Center:</span>
+                            <span className="font-medium text-xs">
+                              {region.enhanced_location_info.coordinates_center}
+                            </span>
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>

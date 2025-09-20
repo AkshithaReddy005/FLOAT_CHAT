@@ -54,13 +54,16 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
             } ${isTyping ? 'animate-pulse' : ''}`}
           >
             {isTyping ? (
-              <div className="flex items-center space-x-2">
+              <div className="flex items-center space-x-3">
                 <div className="flex space-x-1">
-                  <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }}></div>
-                  <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }}></div>
-                  <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }}></div>
+                  <div className="w-2 h-2 bg-blue-500 rounded-full animate-pulse" style={{ animationDelay: '0ms' }}></div>
+                  <div className="w-2 h-2 bg-blue-400 rounded-full animate-pulse" style={{ animationDelay: '200ms' }}></div>
+                  <div className="w-2 h-2 bg-blue-300 rounded-full animate-pulse" style={{ animationDelay: '400ms' }}></div>
                 </div>
-                <span className="text-xs text-gray-500">FloatChat is thinking...</span>
+                <div className="flex flex-col">
+                  <span className="text-xs text-blue-700 font-medium">FloatChat is analyzing...</span>
+                  <span className="text-xs text-gray-500">Processing query and generating insights</span>
+                </div>
               </div>
             ) : (
               <div 

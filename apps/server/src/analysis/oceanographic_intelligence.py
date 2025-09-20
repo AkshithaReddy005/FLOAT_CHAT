@@ -18,6 +18,13 @@ from sklearn.preprocessing import StandardScaler
 # Statistical analysis
 import statsmodels.api as sm
 
+# Location intelligence
+try:
+    from .location_intelligence import LocationIntelligence
+    LOCATION_INTELLIGENCE_AVAILABLE = True
+except ImportError:
+    LOCATION_INTELLIGENCE_AVAILABLE = False
+
 # Anomaly detection
 try:
     from pyod.models.isolation import IForest
@@ -56,6 +63,9 @@ class OceanographicIntelligence:
             self.anomaly_detectors['isolation'] = IForest(contamination=0.1)
             self.anomaly_detectors['lof'] = LOF(contamination=0.1)
 
+        # Initialize location intelligence
+        self.location_intel = LocationIntelligence() if LOCATION_INTELLIGENCE_AVAILABLE else None
+
     def analyze_query_intent(self, query: str, data: List[Dict]) -> str:
         """Intelligently determine what type of analysis the user wants"""
         query_lower = query.lower()
@@ -87,6 +97,10 @@ class OceanographicIntelligence:
 
         # Convert to DataFrame for analysis
         df = pd.DataFrame(data)
+
+        # Enhance with location intelligence if available
+        if self.location_intel and 'latitude' in df.columns and 'longitude' in df.columns:
+            df = self.location_intel.enhance_location_data(df)
 
         # Determine analysis type
         analysis_type = self.analyze_query_intent(query, data)
@@ -593,3 +607,272 @@ class OceanographicIntelligence:
         recommendations.append("Consider quality control procedures for outlying values")
         recommendations.append("Investigate correlations with environmental drivers")
         return recommendations
+
+    def get_location_context_for_rag(self, lat: float, lon: float, depth: Optional[float] = None) -> Dict[str, Any]:
+        """Get enhanced location context for RAG system"""
+        if self.location_intel:
+            return self.location_intel.get_location_based_context(lat, lon, depth)
+        else:
+            # Fallback basic context
+            return {
+                'coordinates': f"{lat:.2f}°, {lon:.2f}°",
+                'ocean_basin': self._basic_ocean_classification(lat, lon),
+                'oceanographic_region': self._basic_oceanographic_region(lat),
+                'depth_context': self._basic_depth_context(depth) if depth else None
+            }
+
+    def _basic_ocean_classification(self, lat: float, lon: float) -> str:
+        """Basic ocean classification fallback"""
+        if 0 <= lat <= 30 and 50 <= lon <= 80:
+            return "Arabian Sea"
+        elif 5 <= lat <= 25 and 80 <= lon <= 100:
+            return "Bay of Bengal"
+        elif lat < 0:
+            return "Southern Indian Ocean"
+        else:
+            return "Northern Indian Ocean"
+
+    def _basic_oceanographic_region(self, lat: float) -> str:
+        """Basic oceanographic region classification"""
+        if -5 <= lat <= 5:
+            return "Equatorial"
+        elif abs(lat) <= 23.5:
+            return "Tropical"
+        elif abs(lat) <= 35:
+            return "Subtropical"
+        else:
+            return "Temperate"
+
+    def _basic_depth_context(self, depth: float) -> str:
+        """Basic depth context"""
+        if depth < 100:
+            return "surface mixed layer"
+        elif depth < 500:
+            return "intermediate waters"
+        elif depth < 1000:
+            return "deep waters"
+        else:
+            return "abyssal depths"
+
+    def _exploratory_analysis(self, df: pd.DataFrame, query: str) -> AnalysisResult:
+        """Comprehensive exploratory analysis for general queries"""
+        findings = []
+        stats_summary = {}
+
+        # Basic data overview
+        findings.append(f"Dataset contains {len(df)} measurements")
+
+        # Available parameters
+        numeric_cols = ['temperature', 'salinity', 'depth', 'pressure', 'latitude', 'longitude']
+        available_params = [col for col in numeric_cols if col in df.columns and df[col].notna().sum() > 0]
+        findings.append(f"Available parameters: {', '.join(available_params)}")
+
+        # Enhanced spatial coverage with location intelligence
+        if 'latitude' in df.columns and 'longitude' in df.columns:
+            lat_range = df['latitude'].max() - df['latitude'].min()
+            lon_range = df['longitude'].max() - df['longitude'].min()
+            findings.append(f"Spatial coverage: {lat_range:.1f}° latitude × {lon_range:.1f}° longitude")
+
+            # Use enhanced location intelligence if available
+            if 'ocean_basin' in df.columns:
+                basin_counts = df['ocean_basin'].value_counts()
+                for basin, count in basin_counts.head(3).items():
+                    findings.append(f"{basin}: {count} measurements")
+            else:
+                # Fallback to basic region identification
+                mean_lat = df['latitude'].mean()
+                mean_lon = df['longitude'].mean()
+                if 0 <= mean_lat <= 30 and 40 <= mean_lon <= 100:
+                    findings.append("Primary region: Northern Indian Ocean")
+                elif -30 <= mean_lat <= 0 and 40 <= mean_lon <= 120:
+                    findings.append("Primary region: Southern Indian Ocean")
+                else:
+                    findings.append("Primary region: Indian Ocean")
+
+            # Add marine region information if available
+            if 'marine_region' in df.columns:
+                marine_regions = df['marine_region'].value_counts()
+                if len(marine_regions) > 0:
+                    findings.append(f"Marine regions covered: {', '.join(marine_regions.head(3).index.tolist())}")
+
+            # Add circulation features if available
+            if 'circulation_feature' in df.columns:
+                circulation_features = df['circulation_feature'].value_counts()
+                if len(circulation_features) > 0:
+                    findings.append(f"Circulation systems: {', '.join(circulation_features.head(2).index.tolist())}")
+
+        # Depth coverage
+        if 'depth' in df.columns:
+            depth_stats = df['depth'].describe()
+            stats_summary['depth'] = {
+                'min': float(depth_stats['min']),
+                'max': float(depth_stats['max']),
+                'mean': float(depth_stats['mean']),
+                'count': int(depth_stats['count'])
+            }
+
+            findings.append(f"Depth range: {depth_stats['min']:.1f}m to {depth_stats['max']:.1f}m")
+
+            # Categorize depth coverage
+            surface_count = len(df[df['depth'] < 100])
+            intermediate_count = len(df[(df['depth'] >= 100) & (df['depth'] < 1000)])
+            deep_count = len(df[df['depth'] >= 1000])
+
+            if surface_count > len(df) * 0.5:
+                findings.append("Dataset primarily contains surface measurements")
+            elif deep_count > len(df) * 0.3:
+                findings.append("Dataset includes significant deep water coverage")
+            else:
+                findings.append("Dataset covers mixed depth ranges")
+
+        # Temperature analysis
+        if 'temperature' in df.columns:
+            temp_stats = df['temperature'].describe()
+            stats_summary['temperature'] = {
+                'min': float(temp_stats['min']),
+                'max': float(temp_stats['max']),
+                'mean': float(temp_stats['mean']),
+                'std': float(temp_stats['std']),
+                'count': int(temp_stats['count'])
+            }
+
+            findings.append(f"Temperature range: {temp_stats['min']:.1f}°C to {temp_stats['max']:.1f}°C")
+
+            # Temperature classification
+            mean_temp = temp_stats['mean']
+            if mean_temp > 25:
+                findings.append("Predominantly warm tropical waters")
+            elif mean_temp > 15:
+                findings.append("Mixed temperate to tropical conditions")
+            elif mean_temp > 5:
+                findings.append("Cool to temperate water masses")
+            else:
+                findings.append("Cold water masses (likely deep or polar)")
+
+            # Check for temperature constraints in query
+            query_lower = query.lower()
+            if any(constraint in query_lower for constraint in ['more than', 'greater than', 'above', '>', 'warmer than']):
+                import re
+                temp_threshold = re.search(r'(\d+(?:\.\d+)?)\s*(?:degrees?|°c?)', query_lower)
+                if temp_threshold:
+                    threshold = float(temp_threshold.group(1))
+                    warm_count = len(df[df['temperature'] > threshold])
+                    findings.append(f"Found {warm_count} measurements with temperature > {threshold}°C")
+
+                    if warm_count > 0:
+                        warm_data = df[df['temperature'] > threshold]
+                        findings.append(f"Warm water locations span {warm_data['latitude'].min():.1f}° to {warm_data['latitude'].max():.1f}° latitude")
+                    else:
+                        findings.append(f"No measurements found with temperature above {threshold}°C in the dataset")
+
+        # Salinity analysis
+        if 'salinity' in df.columns:
+            sal_stats = df['salinity'].describe()
+            stats_summary['salinity'] = {
+                'min': float(sal_stats['min']),
+                'max': float(sal_stats['max']),
+                'mean': float(sal_stats['mean']),
+                'std': float(sal_stats['std']),
+                'count': int(sal_stats['count'])
+            }
+
+            findings.append(f"Salinity range: {sal_stats['min']:.1f} to {sal_stats['max']:.1f} PSU")
+
+            # Salinity characteristics
+            mean_sal = sal_stats['mean']
+            if mean_sal > 36:
+                findings.append("High salinity waters (evaporation or deep water influence)")
+            elif mean_sal < 34:
+                findings.append("Low salinity waters (freshwater input or precipitation)")
+            else:
+                findings.append("Normal oceanic salinity range")
+
+        # Float deployment analysis
+        if 'float_id' in df.columns:
+            unique_floats = df['float_id'].nunique()
+            findings.append(f"Data from {unique_floats} ARGO floats")
+            stats_summary['float_count'] = unique_floats
+
+            # Check data density per float
+            measurements_per_float = len(df) / unique_floats
+            if measurements_per_float > 100:
+                findings.append("High measurement density per float")
+            elif measurements_per_float < 10:
+                findings.append("Sparse measurement coverage per float")
+
+        # Temporal coverage
+        if 'date' in df.columns:
+            try:
+                # Convert date column to datetime if it's not already
+                if df['date'].dtype == 'object':
+                    dates = pd.to_datetime(df['date'])
+                else:
+                    dates = df['date']
+
+                date_range = dates.max() - dates.min()
+                findings.append(f"Temporal span: {date_range.days} days")
+
+                # Seasonal distribution
+                months = dates.dt.month
+                seasonal_dist = {
+                    'Winter (Dec-Feb)': len(months[(months == 12) | (months <= 2)]),
+                    'Spring (Mar-May)': len(months[(months >= 3) & (months <= 5)]),
+                    'Summer (Jun-Aug)': len(months[(months >= 6) & (months <= 8)]),
+                    'Autumn (Sep-Nov)': len(months[(months >= 9) & (months <= 11)])
+                }
+
+                dominant_season = max(seasonal_dist, key=seasonal_dist.get)
+                findings.append(f"Most measurements from {dominant_season}")
+
+            except Exception as e:
+                findings.append("Temporal analysis limited due to date format issues")
+
+        # Data quality assessment
+        missing_data = df.isnull().sum()
+        if missing_data.sum() > 0:
+            findings.append("Data quality: Some missing values detected")
+            for col, missing_count in missing_data.items():
+                if missing_count > 0:
+                    missing_pct = (missing_count / len(df)) * 100
+                    if missing_pct > 10:
+                        findings.append(f"  {col}: {missing_pct:.1f}% missing")
+        else:
+            findings.append("Data quality: Complete dataset with no missing values")
+
+        # Query-specific insights based on key terms
+        query_lower = query.lower()
+
+        if 'western indian ocean' in query_lower:
+            if 'longitude' in df.columns:
+                western_data = df[df['longitude'] < 70]  # Rough western boundary
+                if len(western_data) > 0:
+                    findings.append(f"Western Indian Ocean data: {len(western_data)} measurements")
+                else:
+                    findings.append("Limited coverage in western Indian Ocean region")
+
+        if 'regional' in query_lower or 'region' in query_lower:
+            findings.append("Consider using regional filters for more specific analysis")
+
+        # Generate recommendations based on data characteristics
+        recommendations = []
+
+        if 'temperature' in available_params and 'depth' in available_params:
+            recommendations.append("Consider depth-temperature profile analysis")
+
+        if 'latitude' in available_params and 'longitude' in available_params:
+            recommendations.append("Geographic mapping would provide spatial insights")
+
+        if len(available_params) >= 3:
+            recommendations.append("Multi-parameter correlation analysis recommended")
+
+        if 'float_id' in df.columns and df['float_id'].nunique() > 5:
+            recommendations.append("Float trajectory analysis could reveal circulation patterns")
+
+        recommendations.append("Apply quality control filters for more reliable results")
+
+        return AnalysisResult(
+            analysis_type="exploratory_analysis",
+            primary_findings=findings,
+            statistical_summary=stats_summary,
+            recommendations=recommendations
+        )

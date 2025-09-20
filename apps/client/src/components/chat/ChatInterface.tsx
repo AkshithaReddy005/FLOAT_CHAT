@@ -3,6 +3,7 @@ import { Trash2, Waves, BarChart3 } from 'lucide-react';
 import { ChatMessage } from './ChatMessage';
 import { ChatInput } from './ChatInput';
 import { SessionContextManager } from '../../services/sessionContext';
+import { apiService } from '../../services/api';
 import type { ChatResponse } from '../../types';
 
 export interface Message {
@@ -136,9 +137,22 @@ export const ChatInterface = React.forwardRef<ChatInterfaceRef, ChatInterfacePro
     }
   }, [isLoading, showTyping]);
 
-  const clearConversation = () => {
-    setMessages([]);
-    sessionManager.current.clearSession();
+  const clearConversation = async () => {
+    try {
+      // Clear client-side session context
+      setMessages([]);
+      sessionManager.current.clearSession();
+
+      // Also clear server-side session context to prevent hallucination
+      await apiService.resetSessionContext();
+
+      console.log('Chat conversation and session context completely cleared');
+    } catch (error) {
+      console.error('Error clearing session context:', error);
+      // Even if server reset fails, still clear client-side
+      setMessages([]);
+      sessionManager.current.clearSession();
+    }
   };
 
   return (
@@ -191,9 +205,9 @@ export const ChatInterface = React.forwardRef<ChatInterfaceRef, ChatInterfacePro
             </p>
             <div className="flex flex-wrap gap-2 justify-center max-w-2xl">
               {[
-                "What's the current temperature in various depths of the Indian Ocean?",
-                "Show salinity trends in Arabian Sea",
-                "Find anomalies in Bay of Bengal data",
+                "What's the current temperature in various depths of the bay of bengal?",
+                "Give me data where temperature is more than 20 in indian ocean region",
+                "What is the most recent data you have?",
                 "Deep water analysis for research"
               ].map((suggestion, index) => (
                 <button

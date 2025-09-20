@@ -25,6 +25,7 @@ class ParameterContext:
     location_name: Optional[str] = None
     location_bounds: Optional[Dict[str, float]] = None  # {lat_min, lat_max, lon_min, lon_max}
     coordinate_precision: Optional[str] = None  # 'exact', 'approximate', 'region'
+    location_context: Optional[Dict[str, Any]] = field(default=None)  # Enhanced location intelligence
     
     # Temporal parameters
     date_range: Optional[Tuple[datetime, datetime]] = None

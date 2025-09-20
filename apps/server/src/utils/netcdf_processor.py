@@ -38,9 +38,9 @@ class NetCDFProcessor:
             lat_vars = ['LATITUDE', 'latitude', 'lat', 'Latitude']
             lon_vars = ['LONGITUDE', 'longitude', 'lon', 'Longitude']
             time_vars = ['JULD', 'time', 'TIME', 'Time']
-            pres_vars = ['PRES', 'pressure', 'PRESSURE', 'Pressure', 'depth', 'DEPTH']
-            temp_vars = ['TEMP', 'temperature', 'TEMPERATURE', 'Temperature']
-            sal_vars = ['PSAL', 'salinity', 'SALINITY', 'Salinity']
+            pres_vars = ['PRES', 'pres', 'pressure', 'PRESSURE', 'Pressure', 'depth', 'DEPTH']
+            temp_vars = ['TEMP', 'temp', 'temperature', 'TEMPERATURE', 'Temperature']
+            sal_vars = ['PSAL', 'psal', 'salinity', 'SALINITY', 'Salinity']
 
             # Find actual variable names
             lat_var = next((v for v in lat_vars if v in ds), None)

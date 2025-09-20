@@ -330,8 +330,33 @@ export class SessionContextManager {
   }
 
   clearSession(): void {
+    // Clear session storage
     sessionStorage.removeItem(this.STORAGE_KEY);
+
+    // Also clear any other related storage keys that might exist
+    const keysToRemove = [];
+    for (let i = 0; i < sessionStorage.length; i++) {
+      const key = sessionStorage.key(i);
+      if (key && (key.startsWith('floatchat_') || key.includes('session') || key.includes('context'))) {
+        keysToRemove.push(key);
+      }
+    }
+    keysToRemove.forEach(key => sessionStorage.removeItem(key));
+
+    // Clear localStorage as well in case any data leaked there
+    const localKeysToRemove = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key && key.startsWith('floatchat_')) {
+        localKeysToRemove.push(key);
+      }
+    }
+    localKeysToRemove.forEach(key => localStorage.removeItem(key));
+
+    // Reinitialize with completely fresh session
     this.initializeSession();
+
+    console.log('Session context completely cleared and reinitialized');
   }
 
   getSessionStats(): { messageCount: number; contextItems: number } {

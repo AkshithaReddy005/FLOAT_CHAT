@@ -1,18 +1,78 @@
 import chromadb
+import chromadb.utils.embedding_functions as embedding_functions
 import os
 import hashlib
 from dotenv import load_dotenv
 from typing import List, Dict, Optional
 from datetime import datetime
+import numpy as np
 
 load_dotenv()
+
+# ChromaDB batch size limit - conservative limit to avoid errors
+CHROMA_MAX_BATCH_SIZE = 5000
 
 class VectorStore:
     def __init__(self):
         self.persist_dir = os.getenv("CHROMA_PERSIST_DIR", "./chroma_data")
         self.client = chromadb.PersistentClient(path=self.persist_dir)
-        self.collection = self.client.get_or_create_collection("argo_data")
-        
+
+        # Enhanced embedding function for better scientific data representation
+        self._setup_enhanced_embedding()
+
+        # Handle embedding function conflicts
+        try:
+            self.collection = self.client.get_or_create_collection(
+                "argo_data_enhanced",
+                embedding_function=self.embedding_function
+            )
+            print("Using enhanced collection: argo_data_enhanced")
+        except ValueError as e:
+            if "embedding function" in str(e).lower():
+                print("Embedding function conflict detected, creating new enhanced collection")
+                # Delete old collection and create new one with enhanced embedding
+                try:
+                    self.client.delete_collection("argo_data_enhanced")
+                except:
+                    pass
+                self.collection = self.client.get_or_create_collection(
+                    "argo_data_enhanced",
+                    embedding_function=self.embedding_function
+                )
+                print("Created new enhanced collection")
+            else:
+                raise e
+
+    def _setup_enhanced_embedding(self):
+        """Setup enhanced embedding function optimized for scientific oceanographic data"""
+        try:
+            # Try to use a better embedding model for scientific text if available
+            # sentence-transformers models are excellent for domain-specific content
+            try:
+                # Use all-MiniLM-L6-v2 which balances performance and quality for scientific text
+                self.embedding_function = embedding_functions.SentenceTransformerEmbeddingFunction(
+                    model_name="all-MiniLM-L6-v2"
+                )
+                print("Using enhanced SentenceTransformer embedding model: all-MiniLM-L6-v2")
+            except Exception as st_error:
+                print(f"SentenceTransformer not available: {st_error}")
+                try:
+                    # Fallback to HuggingFace embedding if available
+                    self.embedding_function = embedding_functions.HuggingFaceEmbeddingFunction(
+                        api_key=os.getenv("HUGGINGFACE_API_KEY"),
+                        model_name="sentence-transformers/all-MiniLM-L6-v2"
+                    )
+                    print("Using HuggingFace embedding model: all-MiniLM-L6-v2")
+                except Exception as hf_error:
+                    print(f"HuggingFace embedding not available: {hf_error}")
+                    # Use default ChromaDB embedding as final fallback
+                    self.embedding_function = embedding_functions.DefaultEmbeddingFunction()
+                    print("Using default ChromaDB embedding function")
+        except Exception as e:
+            print(f"Error setting up embedding function: {e}")
+            self.embedding_function = embedding_functions.DefaultEmbeddingFunction()
+            print("Falling back to default ChromaDB embedding function")
+
         # Enhanced analytics patterns for intelligent embedding
         self.analytics_patterns = {
             'temperature_ranges': {
@@ -41,17 +101,68 @@ class VectorStore:
         }
     
     def add_measurements(self, measurements: List[Dict], file_hash: str = None):
-        """Add ARGO measurements to vector store with comprehensive duplicate detection"""
+        """Add ARGO measurements to vector store with batch processing and comprehensive duplicate detection"""
         # Ensure collection exists (handle case where collection was deleted)
         try:
             self.collection.count()
         except Exception as e:
             if "does not exists" in str(e) or "does not exist" in str(e):
                 print(f"Collection missing, recreating: {e}")
-                self.collection = self.client.get_or_create_collection("argo_data")
+                self.collection = self.client.get_or_create_collection("argo_data_enhanced")
             else:
                 raise e
 
+        if not measurements:
+            return {"new_measurements": 0, "duplicates_skipped": 0, "total_processed": 0}
+
+        # If measurements exceed batch size, process in chunks
+        if len(measurements) > CHROMA_MAX_BATCH_SIZE:
+            print(f"Processing {len(measurements)} measurements in batches of {CHROMA_MAX_BATCH_SIZE}")
+            return self._add_measurements_in_batches(measurements, file_hash)
+        else:
+            # Process single batch
+            return self._add_single_batch(measurements, file_hash)
+
+    def _add_measurements_in_batches(self, measurements: List[Dict], file_hash: str = None):
+        """Process measurements in batches to avoid ChromaDB batch size limits"""
+        total_new = 0
+        total_duplicates = 0
+        total_batches = (len(measurements) + CHROMA_MAX_BATCH_SIZE - 1) // CHROMA_MAX_BATCH_SIZE
+
+        print(f"Processing {len(measurements)} measurements in {total_batches} batches")
+
+        for batch_num in range(total_batches):
+            start_idx = batch_num * CHROMA_MAX_BATCH_SIZE
+            end_idx = min(start_idx + CHROMA_MAX_BATCH_SIZE, len(measurements))
+            batch = measurements[start_idx:end_idx]
+
+            print(f"Processing batch {batch_num + 1}/{total_batches}: {len(batch)} measurements")
+
+            try:
+                batch_result = self._add_single_batch(batch, file_hash)
+                total_new += batch_result.get("new_measurements", 0)
+                total_duplicates += batch_result.get("duplicates_skipped", 0)
+
+                print(f"Batch {batch_num + 1} completed: {batch_result.get('new_measurements', 0)} new, "
+                      f"{batch_result.get('duplicates_skipped', 0)} duplicates")
+
+            except Exception as e:
+                print(f"Batch {batch_num + 1} failed: {e}")
+                print("Warning: Vector store operation failed for this batch, but processing continues")
+                # Count failed batch measurements as duplicates to not lose track
+                total_duplicates += len(batch)
+
+        print(f"Batch processing completed: {total_new} total new measurements, "
+              f"{total_duplicates} total duplicates across {total_batches} batches")
+
+        return {
+            "new_measurements": total_new,
+            "duplicates_skipped": total_duplicates,
+            "total_processed": len(measurements)
+        }
+
+    def _add_single_batch(self, measurements: List[Dict], file_hash: str = None):
+        """Process a single batch of measurements with comprehensive duplicate detection"""
         documents = []
         metadatas = []
         ids = []
@@ -59,14 +170,14 @@ class VectorStore:
         new_measurements_count = 0
         duplicate_count = 0
         batch_ids_seen = set()  # Track IDs within current batch
-        
+
         # First pass: Generate all IDs and check for batch duplicates
         measurement_data = []
         batch_duplicate_details = []
-        
+
         for i, measurement in enumerate(measurements):
             measurement_id = self._generate_measurement_id(measurement)
-            
+
             # Debug: Log first few measurements for diagnostic purposes
             if i < 3:
                 temp_debug = measurement.get('temperature')
@@ -74,38 +185,38 @@ class VectorStore:
                 print(f"Measurement {i}: ID={measurement_id}, Float={measurement['float_id']}, "
                       f"Lat={measurement['latitude']:.6f}, Lon={measurement['longitude']:.6f}, "
                       f"Depth={measurement['depth']:.2f}, Temp={temp_str}")
-            
+
             # Check for duplicates within current batch
             if measurement_id in batch_ids_seen:
                 duplicate_count += 1
                 batch_duplicate_details.append(f"Float {measurement['float_id']} at {measurement['latitude']:.3f},{measurement['longitude']:.3f} (ID: {measurement_id[:8]}...)")
                 print(f"DUPLICATE FOUND in batch: Measurement {i} has same ID ({measurement_id}) as previous measurement")
-                
+
                 # Find the previous measurement with same ID for detailed comparison
                 prev_measurement = None
                 for prev_i, (prev_meas, prev_id) in enumerate(measurement_data):
                     if prev_id == measurement_id:
                         prev_measurement = prev_meas
                         break
-                
+
                 if prev_measurement:
                     print(f"  Current:  Float={measurement['float_id']}, Lat={measurement['latitude']:.6f}, Lon={measurement['longitude']:.6f}, Depth={measurement['depth']:.2f}")
                     print(f"  Previous: Float={prev_measurement['float_id']}, Lat={prev_measurement['latitude']:.6f}, Lon={prev_measurement['longitude']:.6f}, Depth={prev_measurement['depth']:.2f}")
                     print(f"  Dates: {measurement['date']} vs {prev_measurement['date']}")
-                
+
                 continue
-            
+
             batch_ids_seen.add(measurement_id)
             measurement_data.append((measurement, measurement_id))
-        
+
         if batch_duplicate_details:
             print(f"Found {len(batch_duplicate_details)} duplicates within batch: {batch_duplicate_details[:3]}{'...' if len(batch_duplicate_details) > 3 else ''}")
-        
+
         # Second pass: Check against existing data in vector store
         if measurement_data:
             # Collect only truly new measurements
             new_measurement_data = []
-            
+
             try:
                 # Batch check for existing IDs - with collection existence check
                 ids_to_check = [item[1] for item in measurement_data]
@@ -115,19 +226,19 @@ class VectorStore:
                 except Exception as collection_error:
                     if "does not exists" in str(collection_error):
                         print(f"Collection recreated during batch check, retrying")
-                        self.collection = self.client.get_or_create_collection("argo_data")
+                        self.collection = self.client.get_or_create_collection("argo_data_enhanced")
                         existing_results = self.collection.get(ids=ids_to_check)
                         existing_ids = set(existing_results['ids']) if existing_results['ids'] else set()
                     else:
                         raise collection_error
-                
+
                 # Filter out existing measurements
                 for measurement, measurement_id in measurement_data:
                     if measurement_id in existing_ids:
                         duplicate_count += 1
                         continue
                     new_measurement_data.append((measurement, measurement_id))
-                    
+
             except Exception as e:
                 print(f"Batch duplicate check failed: {e}, falling back to individual checks")
                 # Fallback to individual checking
@@ -141,34 +252,34 @@ class VectorStore:
                         # If individual check fails, assume it doesn't exist
                         pass
                     new_measurement_data.append((measurement, measurement_id))
-            
+
             # Now process only the truly new measurements
             for measurement, measurement_id in new_measurement_data:
                 # Create intelligent text representation with analytics context
                 doc_text = self._create_enhanced_document_text(measurement)
-                
+
                 documents.append(doc_text)
-                
+
                 # Create enhanced metadata with analytics features
                 metadata = self._create_enhanced_metadata(measurement)
-                
+
                 if file_hash:
                     metadata["file_hash"] = file_hash
-                    
+
                 metadatas.append(metadata)
                 ids.append(measurement_id)
                 new_measurements_count += 1
-        
+
         # Add only new measurements with final uniqueness check
         if documents:
             try:
                 # CRITICAL: Final uniqueness check and validation
                 print(f"About to add {len(documents)} documents to ChromaDB")
-                
+
                 # Create a mapping to track uniqueness
                 unique_data = {}
                 duplicate_ids_found = []
-                
+
                 for i, id_val in enumerate(ids):
                     if id_val in unique_data:
                         duplicate_ids_found.append(id_val)
@@ -179,18 +290,18 @@ class VectorStore:
                             'metadata': metadatas[i],
                             'index': i
                         }
-                
+
                 # Extract only unique data
                 final_documents = [data['document'] for data in unique_data.values()]
                 final_metadatas = [data['metadata'] for data in unique_data.values()]
                 final_ids = list(unique_data.keys())
-                
+
                 # Log any issues found
                 if duplicate_ids_found:
                     print(f"REMOVED {len(duplicate_ids_found)} duplicate IDs from final batch: {duplicate_ids_found[:5]}{'...' if len(duplicate_ids_found) > 5 else ''}")
                     duplicate_count += len(duplicate_ids_found)
                     new_measurements_count = len(final_ids)
-                
+
                 # Triple check: verify no duplicates in final_ids
                 if len(set(final_ids)) != len(final_ids):
                     print("CRITICAL ERROR: Still have duplicates after deduplication!")
@@ -203,10 +314,10 @@ class VectorStore:
                             emergency_docs.append(final_documents[i])
                             emergency_metas.append(final_metadatas[i])
                             emergency_ids.append(id_val)
-                    
+
                     final_documents, final_metadatas, final_ids = emergency_docs, emergency_metas, emergency_ids
                     print(f"Emergency deduplication reduced to {len(final_ids)} unique items")
-                
+
                 # Only proceed if we have data and all IDs are unique
                 if final_documents and len(set(final_ids)) == len(final_ids):
                     print(f"Adding {len(final_ids)} unique documents to ChromaDB")
@@ -239,7 +350,7 @@ class VectorStore:
                     except Exception as add_error:
                         if "does not exists" in str(add_error) or "does not exist" in str(add_error):
                             print(f"Collection missing during add, recreating and retrying: {add_error}")
-                            self.collection = self.client.get_or_create_collection("argo_data")
+                            self.collection = self.client.get_or_create_collection("argo_data_enhanced")
                             self.collection.add(
                                 documents=final_documents,
                                 metadatas=final_metadatas,
@@ -268,7 +379,7 @@ class VectorStore:
                     print(f"BLOCKING ChromaDB add due to remaining duplicates: {len(final_ids)} items, {len(set(final_ids))} unique")
                     new_measurements_count = 0
                     duplicate_count += len(documents)  # Count as duplicates since they weren't added
-                    
+
             except Exception as e:
                 # If even this fails, try to identify the specific issue
                 if "Expected IDs to be unique" in str(e):
@@ -278,7 +389,7 @@ class VectorStore:
                     clean_documents = []
                     clean_metadatas = []
                     clean_ids = []
-                    
+
                     for i, id_val in enumerate(ids):
                         if id_val not in seen_ids:
                             seen_ids.add(id_val)
@@ -288,7 +399,7 @@ class VectorStore:
                         else:
                             duplicate_count += 1
                             new_measurements_count -= 1
-                    
+
                     if clean_documents:
                         try:
                             self.collection.add(
@@ -303,7 +414,7 @@ class VectorStore:
                 else:
                     print(f"ChromaDB error: {e}")
                     print("Warning: Vector store operation failed, but processing continues")
-        
+
         return {
             "new_measurements": new_measurements_count,
             "duplicates_skipped": duplicate_count,
@@ -311,51 +422,52 @@ class VectorStore:
         }
     
     def _create_enhanced_document_text(self, measurement: Dict) -> str:
-        """Create intelligent text representation with oceanographic context for better embeddings"""
-        
-        # Basic measurement info
-        base_text = f"ARGO Float {measurement['float_id']} at latitude {measurement['latitude']:.6f}, longitude {measurement['longitude']:.6f} on {measurement['date']}"
-        
-        # Add depth and water layer context
-        depth = measurement['depth']
-        depth_category = self._categorize_depth(depth)
-        base_text += f". Ocean depth: {depth:.2f}m ({depth_category} water layer)"
-        
-        # Add temperature with thermal characteristics
+        """Create simplified, focused document text for search relevance"""
+
+        # SIMPLIFIED: Focus only on core searchable content
+        parts = []
+
+        # Basic measurement data
+        parts.append(f"ARGO float {measurement['float_id']}")
+
+        # Location
+        lat, lon = measurement['latitude'], measurement['longitude']
+        oceanic_region = self._identify_oceanic_region(lat, lon)
+        parts.append(f"location {lat:.2f}°N {lon:.2f}°E {oceanic_region}")
+
+        # Core parameters with simple categorization
         temp = measurement['temperature']
-        temp_category = self._categorize_temperature(temp)
-        base_text += f". Temperature: {temp:.3f}°C ({temp_category} water)"
-        
-        # Add salinity with characteristics
+        parts.append(f"temperature {temp:.1f}°C")
+
         sal = measurement['salinity']
-        sal_category = self._categorize_salinity(sal)
-        base_text += f". Salinity: {sal:.3f} ({sal_category} water)"
-        
-        # Add pressure
-        base_text += f". Pressure: {measurement['pressure']:.2f} dbar"
-        
-        # Add oceanographic context based on location and depth
-        oceano_context = self._get_oceanographic_context(measurement)
-        if oceano_context:
-            base_text += f". Oceanographic characteristics: {oceano_context}"
-        
-        # Add seasonal context if available
-        seasonal_context = self._get_seasonal_context(measurement['date'])
-        if seasonal_context:
-            base_text += f". {seasonal_context}"
-        
-        # Add water mass identification
-        water_mass = self._identify_water_mass(measurement)
-        if water_mass:
-            base_text += f". Water mass type: {water_mass}"
-        
-        return base_text
+        parts.append(f"salinity {sal:.2f}")
+
+        depth = measurement['depth']
+        parts.append(f"depth {depth:.0f}m")
+
+        # Date
+        date_str = str(measurement['date'])
+        parts.append(f"date {date_str}")
+
+        # Simple threshold keywords for searchability
+        if temp > 25:
+            parts.append("warm hot")
+        elif temp < 10:
+            parts.append("cold cool")
+
+        if depth > 1000:
+            parts.append("deep")
+        elif depth < 100:
+            parts.append("surface shallow")
+
+        return " ".join(parts)
     
     def _create_enhanced_metadata(self, measurement: Dict) -> Dict:
-        """Create enhanced metadata with analytics features"""
-        
+        """Create simplified metadata focusing on essential fields for filtering"""
+
+        # SIMPLIFIED: Focus only on fields used for actual filtering and search
         metadata = {
-            # Basic measurement data
+            # Core measurement data - always needed
             "float_id": str(measurement['float_id']),
             "latitude": float(measurement['latitude']),
             "longitude": float(measurement['longitude']),
@@ -364,37 +476,18 @@ class VectorStore:
             "temperature": float(measurement['temperature']),
             "salinity": float(measurement['salinity']),
             "pressure": float(measurement['pressure']),
-            "created_at": datetime.utcnow().isoformat(),
 
-            # Enhanced analytics features
-            "depth_category": str(self._categorize_depth(measurement['depth'])),
-            "temperature_category": str(self._categorize_temperature(measurement['temperature'])),
-            "salinity_category": str(self._categorize_salinity(measurement['salinity'])),
-            "water_mass_type": str(self._identify_water_mass(measurement)),
+            # Essential categorization only
             "oceanic_region": str(self._identify_oceanic_region(measurement['latitude'], measurement['longitude'])),
-            "season": str(self._get_season_from_date(measurement['date'])),
+            "depth_category": str(self._categorize_depth(measurement['depth'])),
+
+            # Simple boolean flags for common queries
+            "is_surface": True if measurement['depth'] < 100 else False,
+            "is_deep": True if measurement['depth'] > 1000 else False,
+            "is_warm": True if measurement['temperature'] > 25 else False,
+            "is_cold": True if measurement['temperature'] < 10 else False,
         }
 
-        # Add analytics hints with explicit type conversion to avoid numpy bool issues
-        depth = float(measurement['depth'])
-        temp_not_none = measurement['temperature'] is not None
-        sal_not_none = measurement['salinity'] is not None
-
-        metadata.update({
-            # Gradients and analytics hints - FIXED: Ensure native Python types
-            "is_thermocline_depth": True if 50 <= depth <= 200 else False,
-            "is_surface_measurement": True if depth < 50 else False,
-            "is_deep_measurement": True if depth > 1000 else False,
-            "temperature_anomaly": str(self._calculate_temperature_anomaly(measurement)),
-            "salinity_gradient_zone": True if self._is_salinity_gradient_zone(measurement) else False,
-
-            # Visualization hints - FIXED: Ensure native Python types
-            "suitable_for_depth_profile": True,
-            "suitable_for_geographic_mapping": True,
-            "suitable_for_temperature_analysis": True if temp_not_none else False,
-            "suitable_for_salinity_analysis": True if sal_not_none else False
-        })
-        
         return metadata
     
     def _categorize_depth(self, depth: float) -> str:
@@ -550,6 +643,175 @@ class VectorStore:
         
         # Simplified gradient zone detection
         return 50 <= depth <= 500 and 34.5 <= sal <= 36.0
+
+    def _get_physical_processes_context(self, measurement: Dict) -> str:
+        """Identify physical oceanographic processes indicated by the measurement"""
+        contexts = []
+        depth = measurement['depth']
+        temp = measurement['temperature']
+        sal = measurement['salinity']
+
+        # Mixing processes
+        if depth < 100 and 25 <= temp <= 30:
+            contexts.append("active surface mixing")
+
+        # Stratification detection
+        if 100 <= depth <= 300 and 15 <= temp <= 25:
+            contexts.append("water column stratification")
+
+        # Upwelling indicators
+        if depth < 50 and temp < 20 and sal > 35:
+            contexts.append("potential upwelling signature")
+
+        # Deep water formation
+        if depth > 1000 and temp < 4 and sal > 34.6:
+            contexts.append("deep water mass formation")
+
+        # Thermocline characteristics
+        if 50 <= depth <= 200:
+            contexts.append("thermocline dynamics")
+
+        return ", ".join(contexts) if contexts else ""
+
+    def _get_data_quality_context(self, measurement: Dict) -> str:
+        """Provide context about data quality and measurement characteristics"""
+        contexts = []
+
+        # Temperature data quality
+        temp = measurement['temperature']
+        if 0 <= temp <= 40:
+            contexts.append("high quality temperature data")
+
+        # Salinity data quality
+        sal = measurement['salinity']
+        if 30 <= sal <= 40:
+            contexts.append("reliable salinity measurements")
+
+        # Depth coverage
+        depth = measurement['depth']
+        if depth < 100:
+            contexts.append("surface layer coverage")
+        elif depth > 1000:
+            contexts.append("deep ocean coverage")
+
+        return ", ".join(contexts) if contexts else ""
+
+    def _get_regional_significance(self, measurement: Dict) -> str:
+        """Identify regional oceanographic significance"""
+        lat, lon = measurement['latitude'], measurement['longitude']
+        depth = measurement['depth']
+        temp = measurement['temperature']
+
+        contexts = []
+
+        # Arabian Sea specific features
+        if 10 <= lat <= 25 and 60 <= lon <= 75:
+            contexts.append("Arabian Sea monsoon influence")
+            if temp > 26:
+                contexts.append("warm pool dynamics")
+
+        # Equatorial region features
+        if -5 <= lat <= 5:
+            contexts.append("equatorial current system")
+            if depth < 200:
+                contexts.append("equatorial upwelling zone")
+
+        # Southern Ocean features
+        if lat < -20:
+            contexts.append("Southern Ocean water mass")
+            if depth > 500:
+                contexts.append("Antarctic influence")
+
+        # Bay of Bengal characteristics
+        if 5 <= lat <= 22 and 80 <= lon <= 95:
+            contexts.append("Bay of Bengal dynamics")
+            if measurement['salinity'] < 34.5:
+                contexts.append("freshwater influence")
+
+        return ", ".join(contexts) if contexts else ""
+
+    def _get_latitude_zone(self, lat: float) -> str:
+        """Categorize latitude into zones"""
+        if lat >= 30:
+            return "northern"
+        elif lat >= 0:
+            return "tropical_northern"
+        elif lat >= -30:
+            return "tropical_southern"
+        else:
+            return "southern"
+
+    def _get_longitude_zone(self, lon: float) -> str:
+        """Categorize longitude into Indian Ocean zones"""
+        if lon < 50:
+            return "western_indian"
+        elif lon < 80:
+            return "central_indian"
+        elif lon < 100:
+            return "eastern_indian"
+        else:
+            return "indo_pacific"
+
+    def _calculate_density_sigma(self, measurement: Dict) -> float:
+        """Calculate simplified density sigma-t"""
+        # Simplified density calculation for metadata
+        # Real calculation would use full equation of state
+        temp = measurement['temperature']
+        sal = measurement['salinity']
+        # Approximate sigma-t calculation
+        sigma_t = sal - 35.0 + (temp - 20.0) * (-0.2)
+        return round(sigma_t, 3)
+
+    def _get_depth_bin(self, depth: float) -> str:
+        """Bin depth for better filtering"""
+        if depth < 10:
+            return "0-10m"
+        elif depth < 50:
+            return "10-50m"
+        elif depth < 100:
+            return "50-100m"
+        elif depth < 200:
+            return "100-200m"
+        elif depth < 500:
+            return "200-500m"
+        elif depth < 1000:
+            return "500-1000m"
+        elif depth < 2000:
+            return "1000-2000m"
+        else:
+            return "2000m+"
+
+    def _get_temperature_bin(self, temp: float) -> str:
+        """Bin temperature for better filtering"""
+        if temp < 5:
+            return "0-5°C"
+        elif temp < 10:
+            return "5-10°C"
+        elif temp < 15:
+            return "10-15°C"
+        elif temp < 20:
+            return "15-20°C"
+        elif temp < 25:
+            return "20-25°C"
+        elif temp < 30:
+            return "25-30°C"
+        else:
+            return "30°C+"
+
+    def _get_salinity_bin(self, sal: float) -> str:
+        """Bin salinity for better filtering"""
+        if sal < 33:
+            return "<33 PSU"
+        elif sal < 34:
+            return "33-34 PSU"
+        elif sal < 35:
+            return "34-35 PSU"
+        elif sal < 36:
+            return "35-36 PSU"
+        elif sal < 37:
+            return "36-37 PSU"
+        else:
+            return "37+ PSU"
     
     def _generate_measurement_id(self, measurement: Dict) -> str:
         """Generate a unique ID for a measurement based on key identifying fields"""
@@ -599,63 +861,40 @@ class VectorStore:
         return self._search_internal(query_text, n_results, chroma_filters)
     
     def _search_internal(self, query: str, n_results: int = 10, filters: Dict = None) -> Dict:
-        """Enhanced search with robust filtering and fallback strategies"""
+        """Simplified search: semantic search with basic metadata filtering fallback"""
         try:
-            # If we have specific filters (from parameter context), try them with robust error handling
+            # Strategy 1: Try with filters if provided
             if filters:
                 try:
                     print(f"ChromaDB search with filters: {filters}")
                     results = self.collection.query(
                         query_texts=[query],
                         n_results=n_results,
-                        where=filters
+                        where=filters,
+                        include=["documents", "metadatas", "distances"]
                     )
 
-                    # If we got good results, return them
-                    if results.get('documents') and results['documents'][0] and len(results['documents'][0]) >= min(5, n_results // 2):
+                    # If we got results, return them
+                    if results.get('documents') and results['documents'][0]:
                         print(f"Filtered search successful: {len(results['documents'][0])} documents")
                         return results
                     else:
-                        print(f"Filtered search returned few results ({len(results['documents'][0]) if results.get('documents') and results['documents'][0] else 0}), trying fallback")
+                        print("Filtered search returned no results, trying basic semantic search")
                 except Exception as filter_error:
-                    print(f"Filtered search failed: {filter_error}, trying fallback strategies")
+                    print(f"Filtered search failed: {filter_error}, trying basic semantic search")
 
-            # Fallback strategy 1: Try enhanced search with single filters
-            try:
-                if filters and '$and' in filters:
-                    # Try each filter individually to see which works
-                    for single_filter in filters['$and']:
-                        try:
-                            results = self.collection.query(
-                                query_texts=[query],
-                                n_results=n_results,
-                                where=single_filter
-                            )
-                            if results.get('documents') and results['documents'][0]:
-                                print(f"Single filter search successful: {len(results['documents'][0])} documents with filter {single_filter}")
-                                return results
-                        except:
-                            continue
-            except:
-                pass
-
-            # Fallback strategy 2: Enhanced search with query-based filtering
-            enhanced_results = self.enhanced_search(query, n_results)
-            if enhanced_results['documents'][0]:  # If we got results
-                print(f"Enhanced search successful: {len(enhanced_results['documents'][0])} documents")
-                return enhanced_results
-
-            # Fallback strategy 3: Basic semantic search without filters
-            print("Falling back to basic semantic search")
+            # Strategy 2: Basic semantic search without filters
+            print("Using basic semantic search")
             results = self.collection.query(
                 query_texts=[query],
-                n_results=n_results
+                n_results=n_results,
+                include=["documents", "metadatas", "distances"]
             )
             print(f"Basic search returned: {len(results['documents'][0]) if results.get('documents') and results['documents'][0] else 0} documents")
             return results
 
         except Exception as e:
-            print(f"Vector store search completely failed: {e}")
+            print(f"Vector store search failed: {e}")
             # Return empty results structure
             return {
                 'documents': [[]],
@@ -665,91 +904,57 @@ class VectorStore:
             }
     
     def enhanced_search(self, query: str, n_results: int = 10) -> Dict:
-        """Perform analytics-aware search with intelligent filtering"""
+        """Simplified enhanced search with basic keyword-based filtering"""
         try:
             query_lower = query.lower()
-            where_filter = {}
-            
-            # Build intelligent filters based on query content
-            
-            # Depth-based filtering
-            if any(word in query_lower for word in ['surface', 'shallow']):
-                where_filter['is_surface_measurement'] = True
-            elif any(word in query_lower for word in ['deep', 'bottom', 'abyssal']):
-                where_filter['is_deep_measurement'] = True
-            elif any(word in query_lower for word in ['thermocline', 'intermediate']):
-                where_filter['is_thermocline_depth'] = True
-            
-            # Region-based filtering
-            if 'arabian' in query_lower or 'mumbai' in query_lower:
-                where_filter['oceanic_region'] = 'arabian_sea'
-            elif 'equatorial' in query_lower:
-                where_filter['oceanic_region'] = 'equatorial_indian_ocean'
-            elif 'southern' in query_lower:
-                where_filter['oceanic_region'] = 'southern_indian_ocean'
-            elif 'western' in query_lower:
-                where_filter['oceanic_region'] = 'western_indian_ocean'
-            
-            # Parameter-specific filtering
-            if 'temperature' in query_lower and 'salinity' not in query_lower:
-                where_filter['suitable_for_temperature_analysis'] = True
-            elif 'salinity' in query_lower and 'temperature' not in query_lower:
-                where_filter['suitable_for_salinity_analysis'] = True
-            
-            # Water mass filtering
-            if any(word in query_lower for word in ['warm', 'hot', 'tropical']):
-                where_filter['temperature_category'] = 'tropical'
-            elif any(word in query_lower for word in ['cold', 'cool']):
-                where_filter['temperature_category'] = 'cold'
-            
-            # Seasonal filtering
-            seasons = ['winter', 'spring', 'summer', 'autumn']
-            for season in seasons:
-                if season in query_lower:
-                    where_filter['season'] = season
-                    break
-            
-            # Execute filtered search - use only the most specific single filter to avoid operator issues
-            if where_filter:
-                # Prioritize filters by specificity
-                primary_filter = None
-                if 'oceanic_region' in where_filter:
-                    primary_filter = {'oceanic_region': where_filter['oceanic_region']}
-                elif 'temperature_category' in where_filter:
-                    primary_filter = {'temperature_category': where_filter['temperature_category']}
-                elif 'suitable_for_temperature_analysis' in where_filter:
-                    primary_filter = {'suitable_for_temperature_analysis': where_filter['suitable_for_temperature_analysis']}
-                elif 'suitable_for_salinity_analysis' in where_filter:
-                    primary_filter = {'suitable_for_salinity_analysis': where_filter['suitable_for_salinity_analysis']}
-                else:
-                    # Use the first available filter
-                    primary_filter = {list(where_filter.keys())[0]: list(where_filter.values())[0]}
 
-                print(f"Enhanced search with primary filter: {primary_filter}")
+            # Simple keyword-based filters using simplified metadata
+            where_filter = {}
+
+            # Basic depth filtering
+            if any(word in query_lower for word in ['surface', 'shallow']):
+                where_filter['is_surface'] = True
+            elif any(word in query_lower for word in ['deep', 'bottom']):
+                where_filter['is_deep'] = True
+
+            # Basic temperature filtering
+            if any(word in query_lower for word in ['warm', 'hot']):
+                where_filter['is_warm'] = True
+            elif any(word in query_lower for word in ['cold', 'cool']):
+                where_filter['is_cold'] = True
+
+            # Region filtering
+            if 'arabian' in query_lower:
+                where_filter['oceanic_region'] = 'arabian_sea'
+            elif 'indian' in query_lower and 'ocean' in query_lower:
+                where_filter['oceanic_region'] = 'indian_ocean_general'
+
+            # Try with simple filter if available
+            if where_filter:
+                print(f"Enhanced search with simple filter: {where_filter}")
                 results = self.collection.query(
                     query_texts=[query],
-                    n_results=min(n_results * 2, 50),  # Get more results to filter from
-                    where=primary_filter
+                    n_results=n_results,
+                    where=where_filter,
+                    include=["documents", "metadatas", "distances"]
                 )
 
-                # If filtered search returns results, limit to requested number
-                if results['documents'][0]:
-                    for key in results.keys():
-                        if isinstance(results[key], list) and len(results[key]) > 0:
-                            results[key][0] = results[key][0][:n_results]
+                if results.get('documents') and results['documents'][0]:
                     return results
-            
-            # If no specific filters or filtered search failed, do semantic search
+
+            # Fallback to basic semantic search
             return self.collection.query(
                 query_texts=[query],
-                n_results=n_results
+                n_results=n_results,
+                include=["documents", "metadatas", "distances"]
             )
-            
+
         except Exception as e:
-            print(f"Enhanced search failed: {e}, falling back to basic search")
+            print(f"Enhanced search failed: {e}, using basic search")
             return self.collection.query(
                 query_texts=[query],
-                n_results=n_results
+                n_results=n_results,
+                include=["documents", "metadatas", "distances"]
             )
     
     def search_by_analytics_features(self, analytics_request: Dict, n_results: int = 15) -> Dict:
@@ -794,7 +999,8 @@ class VectorStore:
             results = self.collection.query(
                 query_texts=[query_text],
                 n_results=n_results,
-                where=where_filters if where_filters else None
+                where=where_filters if where_filters else None,
+                include=["documents", "metadatas", "distances"]
             )
             
             return results
@@ -814,14 +1020,79 @@ class VectorStore:
             count = self.collection.count()
             return {
                 "total_measurements": count,
-                "collection_name": "argo_data"
+                "collection_name": "argo_data_enhanced"
             }
         except Exception as e:
             return {
                 "total_measurements": 0,
-                "collection_name": "argo_data",
+                "collection_name": "argo_data_enhanced",
                 "error": str(e)
             }
+
+    def verify_data_consistency(self, postgres_sample_data: List[Dict] = None) -> Dict:
+        """Verify data consistency between ChromaDB and PostgreSQL database"""
+        consistency_report = {
+            "total_postgres_provided": 0,
+            "found_in_vector_store": 0,
+            "missing_in_vector_store": 0,
+            "hash_mismatches": 0,
+            "vector_store_total": 0,
+            "consistency_percentage": 0.0,
+            "issues": []
+        }
+
+        try:
+            # Get vector store stats
+            vector_stats = self.get_collection_stats()
+            consistency_report["vector_store_total"] = vector_stats.get("total_measurements", 0)
+
+            if postgres_sample_data and len(postgres_sample_data) > 0:
+                consistency_report["total_postgres_provided"] = len(postgres_sample_data)
+
+                found_count = 0
+                missing_count = 0
+                hash_mismatches = 0
+
+                for i, row_data in enumerate(postgres_sample_data):
+                    try:
+                        # Extract measurement hash or generate it
+                        measurement_hash = row_data.get('measurement_hash')
+                        if not measurement_hash:
+                            # Generate hash if not provided (fallback)
+                            measurement_hash = self._generate_measurement_id(row_data)
+
+                        # Check if exists in vector store by hash
+                        try:
+                            hash_search = self.collection.get(ids=[measurement_hash])
+                            if hash_search and hash_search.get('ids'):
+                                found_count += 1
+                            else:
+                                missing_count += 1
+                                if i < 5:  # Log first few missing items for debugging
+                                    consistency_report["issues"].append(f"Missing: Float {row_data.get('float_id')} at {row_data.get('latitude')},{row_data.get('longitude')}")
+                        except Exception as search_error:
+                            missing_count += 1
+                            consistency_report["issues"].append(f"Search failed for hash {measurement_hash[:8]}...")
+
+                    except Exception as row_error:
+                        missing_count += 1
+                        consistency_report["issues"].append(f"Row processing error: {str(row_error)[:100]}")
+
+                consistency_report["found_in_vector_store"] = found_count
+                consistency_report["missing_in_vector_store"] = missing_count
+                consistency_report["hash_mismatches"] = hash_mismatches
+
+                # Calculate consistency percentage
+                if consistency_report["total_postgres_provided"] > 0:
+                    consistency_report["consistency_percentage"] = (found_count / consistency_report["total_postgres_provided"]) * 100
+
+            else:
+                consistency_report["issues"].append("No PostgreSQL sample data provided for verification")
+
+        except Exception as e:
+            consistency_report["issues"].append(f"Consistency check failed: {str(e)}")
+
+        return consistency_report
     
     def check_file_exists(self, file_hash: str) -> bool:
         """Check if measurements from a specific file hash already exist"""
@@ -829,7 +1100,8 @@ class VectorStore:
             results = self.collection.query(
                 query_texts=[""],  # Empty query to get all results
                 n_results=1,
-                where={"file_hash": file_hash}
+                where={"file_hash": file_hash},
+                include=["documents", "metadatas", "distances"]
             )
             return len(results['ids'][0]) > 0 if results['ids'] else False
         except Exception:
@@ -839,14 +1111,14 @@ class VectorStore:
         """Clear all data from vector store"""
         try:
             # First try to delete the collection
-            self.client.delete_collection("argo_data")
+            self.client.delete_collection("argo_data_enhanced")
         except Exception as e:
             # Collection might not exist, which is fine
-            print(f"Warning: Could not delete collection 'argo_data': {e}")
+            print(f"Warning: Could not delete collection 'argo_data_enhanced': {e}")
             pass
-        
+
         # Create fresh collection
-        self.collection = self.client.get_or_create_collection("argo_data")
+        self.collection = self.client.get_or_create_collection("argo_data_enhanced", embedding_function=self.embedding_function)
         
         # Verify the collection is empty
         try:
@@ -873,4 +1145,5 @@ class VectorStore:
             
         # Create fresh client and collection
         self.client = chromadb.PersistentClient(path=self.persist_dir)
-        self.collection = self.client.get_or_create_collection("argo_data")
+        self._setup_enhanced_embedding()
+        self.collection = self.client.get_or_create_collection("argo_data_enhanced", embedding_function=self.embedding_function)

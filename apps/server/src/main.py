@@ -79,6 +79,13 @@ class ChatResponse(BaseModel):
     query_params: dict
     context_count: int
 
+class SessionResetRequest(BaseModel):
+    session_id: Optional[str] = None
+
+class SessionResetResponse(BaseModel):
+    success: bool
+    message: str
+
 @app.on_event("startup")
 def startup_event():
     create_tables()
@@ -388,6 +395,27 @@ async def chat_with_data(request: ChatRequest, db: Session = Depends(get_db)):
                 context_count=0
             )
 
+@app.post("/session/reset", response_model=SessionResetResponse)
+async def reset_session(request: SessionResetRequest):
+    """Reset session context to prevent AI hallucination"""
+    try:
+        # Clear any server-side cached session context if it exists
+        # For now, since session context is client-managed, we just confirm reset
+
+        # Reset the chatbot service's internal state if needed
+        await chatbot_service.reset_session_context(request.session_id)
+
+        return SessionResetResponse(
+            success=True,
+            message="Session context successfully reset. All previous conversation context has been cleared."
+        )
+    except Exception as e:
+        print(f"Error resetting session: {e}")
+        return SessionResetResponse(
+            success=False,
+            message=f"Failed to reset session: {str(e)}"
+        )
+
 @app.get("/examples")
 def get_example_queries(db: Session = Depends(get_db)):
     """Get dynamic example queries based on available data"""
@@ -405,6 +433,57 @@ def get_example_queries(db: Session = Depends(get_db)):
             "examples": fallback_examples,
             "generated_at": time.time(),
             "status": "fallback",
+            "error": str(e)
+        }
+
+@app.get("/api/location/reverse-geocode")
+def reverse_geocode_location(lat: float, lon: float):
+    """Convert latitude/longitude coordinates to location name using LocationIntelligence"""
+    try:
+        # Initialize location intelligence
+        from analysis.location_intelligence import LocationIntelligence
+        location_intel = LocationIntelligence()
+
+        # Get location context
+        location_context = location_intel.get_location_based_context(lat, lon)
+
+        # Build simple location name from context
+        location_name = []
+
+        # Add marine region if available
+        if location_context.get("marine_region") and location_context["marine_region"] != "Unknown":
+            location_name.append(location_context["marine_region"])
+
+        # Add ocean basin if available
+        if location_context.get("ocean_basin") and location_context["ocean_basin"] != "Unknown":
+            location_name.append(location_context["ocean_basin"])
+
+        # Fallback to oceanographic region
+        if not location_name and location_context.get("oceanographic_region"):
+            location_name.append(location_context["oceanographic_region"])
+
+        # Create final location string
+        final_location = ", ".join(location_name) if location_name else f"Ocean ({lat:.1f}°, {lon:.1f}°)"
+
+        return {
+            "location": final_location,
+            "details": {
+                "ocean_basin": location_context.get("ocean_basin"),
+                "marine_region": location_context.get("marine_region"),
+                "oceanographic_region": location_context.get("oceanographic_region"),
+                "coordinates": f"{lat:.4f}°, {lon:.4f}°"
+            },
+            "success": True
+        }
+
+    except Exception as e:
+        print(f"Error in reverse geocoding: {e}")
+        return {
+            "location": f"Ocean ({lat:.1f}°, {lon:.1f}°)",
+            "details": {
+                "coordinates": f"{lat:.4f}°, {lon:.4f}°"
+            },
+            "success": False,
             "error": str(e)
         }
 
@@ -497,8 +576,16 @@ def get_stats(db: Session = Depends(get_db)):
 
 @app.get("/user/analytics")
 def get_user_analytics(db: Session = Depends(get_db)):
-    """Get analytics data for regular users (similar to admin knowledge base but more user-friendly)"""
+    """Get analytics data for regular users with enhanced location intelligence"""
     try:
+        # Initialize location intelligence
+        try:
+            from analysis.location_intelligence import LocationIntelligence
+            location_intel = LocationIntelligence()
+            location_available = True
+        except ImportError:
+            location_intel = None
+            location_available = False
         # Basic vector store statistics
         vector_stats = vector_store.get_collection_stats()
 
@@ -526,25 +613,8 @@ def get_user_analytics(db: Session = Depends(get_db)):
             ORDER BY min_depth
         """)).fetchall()
 
-        # Geographic distribution
-        geographic_analysis = db.execute(text("""
-            SELECT
-                CASE
-                    WHEN latitude BETWEEN 10 AND 30 AND longitude BETWEEN 60 AND 80 THEN 'Arabian Sea'
-                    WHEN latitude BETWEEN -10 AND 10 AND longitude BETWEEN 60 AND 100 THEN 'Equatorial Indian Ocean'
-                    WHEN latitude BETWEEN -30 AND -10 AND longitude BETWEEN 60 AND 120 THEN 'Southern Indian Ocean'
-                    WHEN latitude BETWEEN -15 AND 15 AND longitude BETWEEN 40 AND 65 THEN 'Western Indian Ocean'
-                    ELSE 'Other Indian Ocean'
-                END as region,
-                COUNT(*) as measurement_count,
-                COUNT(DISTINCT float_id) as float_count,
-                MIN(latitude) as min_lat, MAX(latitude) as max_lat,
-                MIN(longitude) as min_lon, MAX(longitude) as max_lon
-            FROM argo_measurements
-            WHERE latitude IS NOT NULL AND longitude IS NOT NULL
-            GROUP BY region
-            ORDER BY measurement_count DESC
-        """)).fetchall()
+        # Enhanced Geographic distribution using location intelligence
+        geographic_analysis = _get_enhanced_geographic_distribution(db, location_intel if location_available else None)
 
         # Temperature and salinity ranges
         parameter_analysis = db.execute(text("""
@@ -598,7 +668,9 @@ def get_user_analytics(db: Session = Depends(get_db)):
                     "measurement_count": row[1],
                     "float_count": row[2],
                     "lat_range": [float(row[3]), float(row[4])] if row[3] and row[4] else None,
-                    "lon_range": [float(row[5]), float(row[6])] if row[5] and row[6] else None
+                    "lon_range": [float(row[5]), float(row[6])] if row[5] and row[6] else None,
+                    # Enhanced location intelligence
+                    "enhanced_location_info": _get_enhanced_region_info(row, location_intel) if location_available else None
                 }
                 for row in geographic_analysis
             ],
@@ -639,10 +711,167 @@ def get_user_analytics(db: Session = Depends(get_db)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to load user analytics: {str(e)}")
 
+def _get_enhanced_geographic_distribution(db, location_intel):
+    """Get enhanced geographic distribution using location intelligence"""
+    if location_intel:
+        # Get all data points with coordinates
+        raw_data = db.execute(text("""
+            SELECT latitude, longitude, float_id
+            FROM argo_measurements
+            WHERE latitude IS NOT NULL AND longitude IS NOT NULL
+        """)).fetchall()
+
+        # Use location intelligence to classify regions
+        region_data = {}
+
+        for lat, lon, float_id in raw_data:
+            try:
+                # Get location context for this point
+                location_context = location_intel.get_location_based_context(lat, lon)
+
+                # Use ocean basin as primary classification
+                ocean_basin = location_context.get("ocean_basin", "Unknown Ocean")
+                marine_region = location_context.get("marine_region", "Unknown Region")
+
+                # Create hierarchical region name
+                if marine_region and marine_region != "Unknown Region" and marine_region != ocean_basin:
+                    region_name = f"{ocean_basin} - {marine_region}"
+                else:
+                    region_name = ocean_basin
+
+                if region_name not in region_data:
+                    region_data[region_name] = {
+                        'measurements': [],
+                        'floats': set(),
+                        'lats': [],
+                        'lons': [],
+                        'context': location_context
+                    }
+
+                region_data[region_name]['measurements'].append((lat, lon))
+                region_data[region_name]['floats'].add(float_id)
+                region_data[region_name]['lats'].append(lat)
+                region_data[region_name]['lons'].append(lon)
+
+            except Exception as e:
+                print(f"Error processing location {lat}, {lon}: {e}")
+                continue
+
+        # Convert to format expected by analytics
+        result = []
+        for region_name, data in region_data.items():
+            if len(data['measurements']) > 0:  # Only include regions with data
+                result.append((
+                    region_name,
+                    len(data['measurements']),  # measurement_count
+                    len(data['floats']),         # float_count
+                    min(data['lats']),           # min_lat
+                    max(data['lats']),           # max_lat
+                    min(data['lons']),           # min_lon
+                    max(data['lons']),           # max_lon
+                    data['context']              # Enhanced context
+                ))
+
+        # Sort by measurement count descending
+        result.sort(key=lambda x: x[1], reverse=True)
+        return result
+
+    else:
+        # Fallback to enhanced static classification
+        return db.execute(text("""
+            SELECT
+                CASE
+                    WHEN latitude BETWEEN 15 AND 25 AND longitude BETWEEN 65 AND 75 THEN 'Arabian Sea - Central'
+                    WHEN latitude BETWEEN 10 AND 15 AND longitude BETWEEN 65 AND 75 THEN 'Arabian Sea - Southern'
+                    WHEN latitude BETWEEN 20 AND 30 AND longitude BETWEEN 60 AND 70 THEN 'Arabian Sea - Northern'
+                    WHEN latitude BETWEEN 8 AND 20 AND longitude BETWEEN 80 AND 95 THEN 'Bay of Bengal - Western'
+                    WHEN latitude BETWEEN 8 AND 20 AND longitude BETWEEN 90 AND 100 THEN 'Bay of Bengal - Eastern'
+                    WHEN latitude BETWEEN -5 AND 5 AND longitude BETWEEN 50 AND 100 THEN 'Equatorial Indian Ocean'
+                    WHEN latitude BETWEEN -20 AND -5 AND longitude BETWEEN 60 AND 100 THEN 'Southern Indian Ocean - Tropical'
+                    WHEN latitude BETWEEN -40 AND -20 AND longitude BETWEEN 60 AND 120 THEN 'Southern Indian Ocean - Subtropical'
+                    WHEN latitude < -40 AND longitude BETWEEN 60 AND 140 THEN 'Southern Ocean - Indian Sector'
+                    WHEN latitude BETWEEN 0 AND 30 AND longitude BETWEEN 40 AND 65 THEN 'Western Indian Ocean'
+                    WHEN latitude BETWEEN -30 AND 0 AND longitude BETWEEN 40 AND 65 THEN 'Southwest Indian Ocean'
+                    WHEN latitude BETWEEN -15 AND 15 AND longitude BETWEEN 100 AND 120 THEN 'Eastern Indian Ocean'
+                    ELSE 'Other Indian Ocean Regions'
+                END as region,
+                COUNT(*) as measurement_count,
+                COUNT(DISTINCT float_id) as float_count,
+                MIN(latitude) as min_lat, MAX(latitude) as max_lat,
+                MIN(longitude) as min_lon, MAX(longitude) as max_lon
+            FROM argo_measurements
+            WHERE latitude IS NOT NULL AND longitude IS NOT NULL
+            GROUP BY region
+            HAVING COUNT(*) > 0
+            ORDER BY measurement_count DESC
+        """)).fetchall()
+
+def _get_enhanced_region_info(row, location_intel):
+    """Get enhanced location information for a geographic region"""
+    if not location_intel:
+        return None
+
+    try:
+        # Handle both old format and new enhanced format
+        if len(row) >= 8 and hasattr(row[7], 'get'):
+            # New format with location context included
+            return {
+                "ocean_basin": row[7].get("ocean_basin"),
+                "marine_region": row[7].get("marine_region"),
+                "oceanographic_region": row[7].get("oceanographic_region"),
+                "circulation_feature": row[7].get("circulation_feature"),
+                "oceanographic_features": row[7].get("oceanographic_features", []),
+                "seasonal_notes": row[7].get("seasonal_notes", []),
+                "coordinates_center": row[7].get("coordinates"),
+                "data_density": round(row[1] / ((row[4] - row[3]) * (row[6] - row[5])), 2) if (row[4] - row[3]) * (row[6] - row[5]) > 0 else 0
+            }
+        elif len(row) >= 7:
+            # Old format, calculate location context
+            region_name = row[0]
+            measurement_count = row[1]
+            float_count = row[2]
+            lat_min, lat_max = row[3], row[4]
+            lon_min, lon_max = row[5], row[6]
+
+            if not all([lat_min, lat_max, lon_min, lon_max]):
+                return None
+
+            # Get center coordinates
+            center_lat = (lat_min + lat_max) / 2
+            center_lon = (lon_min + lon_max) / 2
+
+            # Get enhanced location context
+            location_context = location_intel.get_location_based_context(center_lat, center_lon)
+
+            return {
+                "ocean_basin": location_context.get("ocean_basin"),
+                "marine_region": location_context.get("marine_region"),
+                "oceanographic_region": location_context.get("oceanographic_region"),
+                "circulation_feature": location_context.get("circulation_feature"),
+                "oceanographic_features": location_context.get("oceanographic_features", []),
+                "seasonal_notes": location_context.get("seasonal_notes", []),
+                "coordinates_center": location_context.get("coordinates"),
+                "data_density": round(measurement_count / ((lat_max - lat_min) * (lon_max - lon_min)), 2) if (lat_max - lat_min) * (lon_max - lon_min) > 0 else 0
+            }
+        else:
+            return None
+
+    except Exception as e:
+        print(f"Error getting enhanced region info: {e}")
+        return None
+
 @app.get("/admin/knowledge-base")
 def get_knowledge_base_details(db: Session = Depends(get_db)):
     """Get detailed knowledge base information including data distribution and RAG insights"""
     try:
+        # Initialize location intelligence
+        try:
+            from analysis.location_intelligence import LocationIntelligence
+            location_intel = LocationIntelligence()
+            location_available = True
+        except ImportError:
+            location_intel = None
+            location_available = False
         # Basic vector store statistics
         vector_stats = vector_store.get_collection_stats()
         
@@ -670,25 +899,8 @@ def get_knowledge_base_details(db: Session = Depends(get_db)):
             ORDER BY min_depth
         """)).fetchall()
         
-        # Geographic distribution
-        geographic_analysis = db.execute(text("""
-            SELECT 
-                CASE
-                    WHEN latitude BETWEEN 10 AND 30 AND longitude BETWEEN 60 AND 80 THEN 'Arabian Sea'
-                    WHEN latitude BETWEEN -10 AND 10 AND longitude BETWEEN 60 AND 100 THEN 'Equatorial Indian Ocean'
-                    WHEN latitude BETWEEN -30 AND -10 AND longitude BETWEEN 60 AND 120 THEN 'Southern Indian Ocean'
-                    WHEN latitude BETWEEN -15 AND 15 AND longitude BETWEEN 40 AND 65 THEN 'Western Indian Ocean'
-                    ELSE 'Other Indian Ocean'
-                END as region,
-                COUNT(*) as measurement_count,
-                COUNT(DISTINCT float_id) as float_count,
-                MIN(latitude) as min_lat, MAX(latitude) as max_lat,
-                MIN(longitude) as min_lon, MAX(longitude) as max_lon
-            FROM argo_measurements 
-            WHERE latitude IS NOT NULL AND longitude IS NOT NULL
-            GROUP BY region
-            ORDER BY measurement_count DESC
-        """)).fetchall()
+        # Enhanced Geographic distribution using location intelligence
+        geographic_analysis = _get_enhanced_geographic_distribution(db, location_intel if location_available else None)
         
         # Temperature and salinity ranges
         parameter_analysis = db.execute(text("""
@@ -750,7 +962,9 @@ def get_knowledge_base_details(db: Session = Depends(get_db)):
                     "measurement_count": row[1],
                     "float_count": row[2],
                     "lat_range": [float(row[3]), float(row[4])] if row[3] and row[4] else None,
-                    "lon_range": [float(row[5]), float(row[6])] if row[5] and row[6] else None
+                    "lon_range": [float(row[5]), float(row[6])] if row[5] and row[6] else None,
+                    # Enhanced location intelligence
+                    "enhanced_location_info": _get_enhanced_region_info(row, location_intel) if location_available else None
                 }
                 for row in geographic_analysis
             ],

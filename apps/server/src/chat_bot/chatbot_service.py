@@ -90,7 +90,16 @@ class ChatbotService:
             parameter_context = self.query_parser.parse_query(user_query, session_context, query_classification)
             step_time = time.time() - parse_start
             timing_data['parameter_extraction'] = step_time
-            
+
+            # CRITICAL: Debug parameter extraction for temperature thresholds
+            print(f"DEBUG: User query: '{user_query}'")
+            print(f"DEBUG: Extracted temperature_range: {parameter_context.temperature_range}")
+            print(f"DEBUG: Extracted salinity_range: {parameter_context.salinity_range}")
+            print(f"DEBUG: Extracted location: {parameter_context.location_name}")
+            print(f"DEBUG: Extracted parameters: {parameter_context.parameters}")
+            print(f"DEBUG: Location context: {parameter_context.location_context}")
+            print(f"DEBUG: Extraction method: {getattr(parameter_context, 'extraction_method', 'unknown')}")
+
             # Track parameter extraction in pipeline flow
             pipeline_flow["parameter_extraction"] = {
                 "duration": f"{step_time:.4f}s",
@@ -98,6 +107,8 @@ class ChatbotService:
                 "extracted_location": parameter_context.location_name or "Not specified",
                 "extracted_parameters": parameter_context.parameters or [],
                 "extracted_years": parameter_context.date_years or [],
+                "temperature_range": parameter_context.temperature_range,
+                "salinity_range": parameter_context.salinity_range,
                 "confidence_score": parameter_context.confidence_score,
                 "complexity_level": parameter_context.complexity_level,
                 "is_chart_request": parameter_context.is_chart_request,
@@ -109,10 +120,10 @@ class ChatbotService:
                 "status": "success",
                 "details": f"Extracted {len(parameter_context.parameters or [])} parameters with {(parameter_context.confidence_score * 100):.1f}% confidence"
             })
-            
+
             # Log parameter extraction
             parameter_logger.log_parameter_extraction(user_query, parameter_context)
-            
+
             print(f"Unified Parameters: {parameter_context.get_summary()}")
             
         except Exception as e:
@@ -353,6 +364,7 @@ class ChatbotService:
             enhanced_session_context['display_limited'] = display_count < actual_count
             enhanced_session_context['intelligent_analysis'] = intelligent_analysis
             enhanced_session_context['query_enhancement'] = query_enhancement
+            enhanced_session_context['location_context'] = parameter_context.location_context
 
             ai_response = await self.rag_engine.generate_response(
                 user_query, context_results, db_results, query_classification,
@@ -1221,3 +1233,23 @@ class ChatbotService:
             print(f"Chart-optimized data retrieval failed: {e}")
             # Fall back to basic query
             return self._fallback_data_retrieval(db, user_query)
+
+    async def reset_session_context(self, session_id: str = None):
+        """Reset any server-side session context to prevent hallucination"""
+        try:
+            # For now, we don't maintain server-side session state persistently
+            # But this method can be extended to clear any cached context if needed
+
+            # If we had any session-specific caches, we would clear them here
+            # For example: session-specific query history, context cache, etc.
+
+            print(f"Session context reset requested for session: {session_id or 'anonymous'}")
+
+            # Clear any internal state that might affect future responses
+            # If the query parser or RAG engine maintain any state, reset it here
+
+            return True
+
+        except Exception as e:
+            print(f"Error resetting session context: {e}")
+            return False

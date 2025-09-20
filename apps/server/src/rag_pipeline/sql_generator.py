@@ -5,6 +5,8 @@ Generates SQL queries from natural language using LLM or rule-based approaches.
 
 import os
 import re
+import asyncio
+import random
 from typing import Dict, List, Optional
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
@@ -23,6 +25,19 @@ class SQLGenerator:
     def __init__(self):
         self.gemini_api_key = os.getenv("GEMINI_API_KEY")
         self.gemini_model = os.getenv("GEMINI_SQL_MODEL", "gemini-2.0-flash")
+
+        # Thinking delay configuration
+        self.thinking_enabled = os.getenv("SQL_THINKING_ENABLED", "true").lower() == "true"
+        self.base_thinking_delay = float(os.getenv("SQL_BASE_THINKING_DELAY", "2.0"))  # 2 seconds base
+        self.thinking_variance = float(os.getenv("SQL_THINKING_VARIANCE", "1.0"))  # ±1 second variance
+
+        # Initialize SQL validator for consistency checking
+        try:
+            from .sql_validator import SQLValidator
+            self.sql_validator = SQLValidator()
+        except ImportError:
+            print("Warning: SQL validator not available")
+            self.sql_validator = None
         
         # Initialize Gemini if available
         if GEMINI_AVAILABLE and self.gemini_api_key:
@@ -37,8 +52,21 @@ class SQLGenerator:
         else:
             self.use_gemini = False
             print("SQL Generator: Using rule-based approach only")
-    
-    async def generate_sql(self, user_query: str, query_classification: Dict, 
+
+    async def _thinking_delay(self, complexity_multiplier: float = 1.0) -> None:
+        """Add deliberate thinking delay for better perceived accuracy"""
+        if not self.thinking_enabled:
+            return
+
+        # Calculate delay with random variance
+        delay = self.base_thinking_delay * complexity_multiplier
+        variance = random.uniform(-self.thinking_variance, self.thinking_variance)
+        final_delay = max(0.5, delay + variance)  # Minimum 0.5 seconds
+
+        print(f"SQL Generator: Thinking for {final_delay:.2f} seconds...")
+        await asyncio.sleep(final_delay)
+
+    async def generate_sql(self, user_query: str, query_classification: Dict,
                           context_results: Dict = None, session_context: dict = None) -> Optional[str]:
         """Generate SQL query based on user input and classification"""
         
@@ -55,18 +83,22 @@ class SQLGenerator:
         # Always use rule-based generation for comparative queries to ensure
         # deterministic region-wise aggregation SQL is produced.
         if getattr(parameter_context, "is_comparative", False):
-            return self._generate_rule_based_from_context(parameter_context)
-        
+            return await self._generate_rule_based_from_context(parameter_context)
+
         if self.use_gemini and parameter_context.complexity_level == "complex":
             # Use LLM for complex queries (non-comparative)
             return await self._generate_with_gemini_from_context(parameter_context)
         else:
             # Use rule-based approach for simple queries
-            return self._generate_rule_based_from_context(parameter_context)
+            return await self._generate_rule_based_from_context(parameter_context)
     
     async def _generate_with_gemini_from_context(self, parameter_context) -> Optional[str]:
         """Generate SQL using Gemini LLM from parameter context"""
-        
+
+        # Add thinking delay based on complexity
+        complexity_multiplier = 1.5 if parameter_context.complexity_level == "complex" else 1.0
+        await self._thinking_delay(complexity_multiplier)
+
         # Build prompt from parameter context
         context_summary = f"Parameters: {parameter_context.get_summary()}"
         
@@ -98,7 +130,10 @@ Generate ONLY the SQL query:"""
     
     async def _generate_with_gemini(self, user_query: str, context_results: Dict = None, session_context: dict = None) -> Optional[str]:
         """Generate SQL using Gemini LLM"""
-        
+
+        # Add thinking delay for complex query processing
+        await self._thinking_delay(1.2)  # Slightly longer for manual queries
+
         # Extract context information if available
         context_summary = ""
         if context_results and context_results.get('documents'):
@@ -230,7 +265,7 @@ Generate ONLY the SQL query (no explanation or markdown):"""
             print(f"Failed to generate SQL with Gemini: {e}")
             return None
     
-    def _generate_rule_based_from_context(self, parameter_context) -> Optional[str]:
+    async def _generate_rule_based_from_context(self, parameter_context) -> Optional[str]:
         """Generate SQL using rule-based approach from parameter context"""
         
         # Build SQL components from parameter context
@@ -274,17 +309,21 @@ Generate ONLY the SQL query (no explanation or markdown):"""
             for param in parameter_context.parameters:
                 where_conditions.append(f"{param} IS NOT NULL")
 
-        # Temperature threshold filter - FIXED
+        # Temperature threshold filter - ENHANCED: Include debug logging
         if parameter_context.temperature_range:
             operator, temp_value = parameter_context.temperature_range
-            where_conditions.append(f"temperature {operator} {temp_value}")
-            where_conditions.append(f"temperature IS NOT NULL")
+            temp_condition = f"temperature {operator} {temp_value}"
+            where_conditions.append(temp_condition)
+            where_conditions.append("temperature IS NOT NULL")
+            print(f"DEBUG: SQL Generator - Added temperature filter: {temp_condition}")
 
-        # Salinity threshold filter - FIXED
+        # Salinity threshold filter - ENHANCED: Include debug logging
         if parameter_context.salinity_range:
             operator, sal_value = parameter_context.salinity_range
-            where_conditions.append(f"salinity {operator} {sal_value}")
-            where_conditions.append(f"salinity IS NOT NULL")
+            sal_condition = f"salinity {operator} {sal_value}"
+            where_conditions.append(sal_condition)
+            where_conditions.append("salinity IS NOT NULL")
+            print(f"DEBUG: SQL Generator - Added salinity filter: {sal_condition}")
 
         # Float ID filter
         if parameter_context.float_ids:
@@ -369,6 +408,26 @@ Generate ONLY the SQL query (no explanation or markdown):"""
 
         sql += f" LIMIT {limit}"
 
+        # CRITICAL: Validate the generated SQL against the parameter context
+        if self.sql_validator:
+            # Add validation thinking delay
+            print("SQL Generator: Validating generated query...")
+            await self._thinking_delay(0.5)  # Brief validation delay
+
+            is_valid, violations = self.sql_validator.validate_sql_against_context(sql, parameter_context)
+            if not is_valid:
+                print(f"WARNING: Generated SQL failed validation!")
+                print(f"Query: {parameter_context.original_query}")
+                print(f"Violations: {violations}")
+                print(f"Generated SQL: {sql}")
+
+                # Also run the specific temperature threshold check
+                temp_valid, temp_violations = self.sql_validator.validate_temperature_threshold_specifically(
+                    sql, parameter_context.original_query
+                )
+                if not temp_valid:
+                    print(f"CRITICAL: Temperature threshold validation failed: {temp_violations}")
+
         return sql
     
     def _get_location_bounds_from_name(self, location_name: str) -> Optional[Dict]:
@@ -427,17 +486,21 @@ Generate ONLY the SQL query (no explanation or markdown):"""
                 depth_start, depth_end = depth_range
                 where_conditions.append(f"depth BETWEEN {depth_start} AND {depth_end}")
 
-        # Add temperature threshold filter - FIXED
+        # Add temperature threshold filter - ENHANCED: Include debug logging
         if params.get("temperature_range"):
             operator, temp_value = params["temperature_range"]
-            where_conditions.append(f"temperature {operator} {temp_value}")
-            where_conditions.append(f"temperature IS NOT NULL")
+            temp_condition = f"temperature {operator} {temp_value}"
+            where_conditions.append(temp_condition)
+            where_conditions.append("temperature IS NOT NULL")
+            print(f"DEBUG: SQL Generator (legacy) - Added temperature filter: {temp_condition}")
 
-        # Add salinity threshold filter - FIXED
+        # Add salinity threshold filter - ENHANCED: Include debug logging
         if params.get("salinity_range"):
             operator, sal_value = params["salinity_range"]
-            where_conditions.append(f"salinity {operator} {sal_value}")
-            where_conditions.append(f"salinity IS NOT NULL")
+            sal_condition = f"salinity {operator} {sal_value}"
+            where_conditions.append(sal_condition)
+            where_conditions.append("salinity IS NOT NULL")
+            print(f"DEBUG: SQL Generator (legacy) - Added salinity filter: {sal_condition}")
 
         # Add parameter filter (temperature, salinity, etc.)
         if params.get("parameter"):
@@ -558,43 +621,18 @@ Generate ONLY the SQL query (no explanation or markdown):"""
                     params["depth_range"] = (depth - 50, depth + 50)
                 break
 
-        # Extract temperature thresholds - FIXED: Add temperature value filters
-        temp_patterns = [
-            r"temperature\s*(?:is\s*)?(?:less\s+than|below|under)\s*(\d+(?:\.\d+)?)\s*(?:degrees?|°)?c?",  # "temperature less than 20°C"
-            r"temperature\s*(?:is\s*)?(?:greater\s+than|above|over)\s*(\d+(?:\.\d+)?)\s*(?:degrees?|°)?c?", # "temperature greater than 25°C"
-            r"temps?\s*(?:less\s+than|below|under)\s*(\d+(?:\.\d+)?)\s*(?:degrees?|°)?c?",  # "temp below 20°C"
-            r"temps?\s*(?:greater\s+than|above|over)\s*(\d+(?:\.\d+)?)\s*(?:degrees?|°)?c?", # "temp above 25°C"
-            r"(?:where|with|having)\s+temperature\s*[<]\s*(\d+(?:\.\d+)?)", # "where temperature < 20"
-            r"(?:where|with|having)\s+temperature\s*[>]\s*(\d+(?:\.\d+)?)", # "where temperature > 20"
-        ]
+        # Extract temperature and salinity thresholds using unified patterns
+        from .extraction_patterns import extract_temperature_threshold, extract_salinity_threshold
 
-        for i, pattern in enumerate(temp_patterns):
-            match = re.search(pattern, query_lower)
-            if match:
-                temp_value = float(match.group(1))
-                if i in [0, 2, 4]:  # less than/below patterns
-                    params["temperature_range"] = ("<", temp_value)
-                else:  # greater than/above patterns
-                    params["temperature_range"] = (">", temp_value)
-                break
+        temperature_range = extract_temperature_threshold(query_lower)
+        if temperature_range:
+            params["temperature_range"] = temperature_range
+            print(f"DEBUG: SQL Generator extracted temperature threshold: {temperature_range}")
 
-        # Extract salinity thresholds
-        sal_patterns = [
-            r"salinity\s*(?:is\s*)?(?:less\s+than|below|under)\s*(\d+(?:\.\d+)?)",  # "salinity less than 35"
-            r"salinity\s*(?:is\s*)?(?:greater\s+than|above|over)\s*(\d+(?:\.\d+)?)", # "salinity greater than 35"
-            r"(?:where|with|having)\s+salinity\s*[<]\s*(\d+(?:\.\d+)?)", # "where salinity < 35"
-            r"(?:where|with|having)\s+salinity\s*[>]\s*(\d+(?:\.\d+)?)", # "where salinity > 35"
-        ]
-
-        for i, pattern in enumerate(sal_patterns):
-            match = re.search(pattern, query_lower)
-            if match:
-                sal_value = float(match.group(1))
-                if i in [0, 2]:  # less than/below patterns
-                    params["salinity_range"] = ("<", sal_value)
-                else:  # greater than/above patterns
-                    params["salinity_range"] = (">", sal_value)
-                break
+        salinity_range = extract_salinity_threshold(query_lower)
+        if salinity_range:
+            params["salinity_range"] = salinity_range
+            print(f"DEBUG: SQL Generator extracted salinity threshold: {salinity_range}")
 
         # Extract parameter type
         if "temperature" in query_lower:

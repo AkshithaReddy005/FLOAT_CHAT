@@ -127,6 +127,24 @@ class ApiService {
       method: 'GET',
     });
   }
+
+  async resetSessionContext(sessionId?: string): Promise<{ success: boolean; message: string }> {
+    return this.makeRequest<{ success: boolean; message: string }>('/session/reset', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        session_id: sessionId
+      }),
+    });
+  }
+
+  async getLocationName(lat: number, lon: number): Promise<{ location: string; details: any; success: boolean }> {
+    return this.makeRequest<{ location: string; details: any; success: boolean }>(`/api/location/reverse-geocode?lat=${lat}&lon=${lon}`, {
+      method: 'GET',
+    });
+  }
 }
 
 

@@ -70,6 +70,8 @@ Return JSON with this exact structure:
     "depth_type": null,
     "parameters": [],
     "float_ids": null,
+    "temperature_range": null,
+    "salinity_range": null,
     "is_analytical": false,
     "is_comparative": false,
     "is_chart_request": false,
@@ -85,6 +87,8 @@ Rules:
 - depth_type: "operator" or "range" or null
 - parameters: ["temperature"] or ["salinity"] or ["temperature", "salinity"] or []
 - float_ids: ["FLOAT_000123"] or null
+- temperature_range: [">", 25.0] for "temperature > 25", ["<", 10.0] for "temperature < 10", or null
+- salinity_range: [">", 35.0] for "salinity > 35", ["<", 34.0] for "salinity < 34", or null
 - is_analytical: true for average/mean/std/correlation/min/max queries
 - is_comparative: true for "compare X and Y" or "X vs Y"
 - is_chart_request: true for "plot", "chart", "graph", "visualize"
@@ -92,12 +96,23 @@ Rules:
 
 Depth extraction examples:
 - "greater than 200m" → [">=", 200]
-- "depth greater than 200m" → [">=", 200] 
+- "depth greater than 200m" → [">=", 200]
 - "deeper than 500m" → [">=", 500]
 - "below 100m" → ["<=", 100]
 - "shallower than 50m" → ["<=", 50]
 - "between 100m and 500m" → [100, 500]
 - "at 1000m depth" → [950, 1050]
+
+Temperature threshold examples:
+- "temperature more than 20" → [">", 20.0]
+- "temperature greater than 25" → [">", 25.0]
+- "temperature below 10" → ["<", 10.0]
+- "temperature less than 15" → ["<", 15.0]
+
+Salinity threshold examples:
+- "salinity greater than 35" → [">", 35.0]
+- "salinity less than 34" → ["<", 34.0]
+- "salinity above 36" → [">", 36.0]
 
 Known regions with bounds:
 - arabian sea: 10-25°N, 65-75°E
@@ -132,6 +147,8 @@ JSON only:"""
             "depth_type": extracted.get("depth_type"),
             "parameters": extracted.get("parameters", []),
             "float_ids": extracted.get("float_ids"),
+            "temperature_range": self._normalize_threshold_range(extracted.get("temperature_range")),
+            "salinity_range": self._normalize_threshold_range(extracted.get("salinity_range")),
             "is_analytical": bool(extracted.get("is_analytical", False)),
             "is_comparative": bool(extracted.get("is_comparative", False)),
             "is_chart_request": bool(extracted.get("is_chart_request", False)),
@@ -155,3 +172,15 @@ JSON only:"""
             normalized["parameters"] = [p for p in normalized["parameters"] if p in valid_params]
         
         return normalized
+
+    def _normalize_threshold_range(self, threshold_data):
+        """Normalize threshold range from LLM output to consistent tuple format"""
+        if not threshold_data:
+            return None
+
+        if isinstance(threshold_data, list) and len(threshold_data) == 2:
+            operator, value = threshold_data
+            if operator in [">", "<", ">=", "<="] and isinstance(value, (int, float)):
+                return (operator, float(value))
+
+        return None
