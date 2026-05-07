@@ -249,15 +249,85 @@ class UnifiedQueryParser:
         # Extract temporal parameters
         date_range, date_years, temporal_type = self._extract_temporal(query_lower)
         
-        # Extract depth parameters
-        depth_range, depth_type = self._extract_depth(query_lower, session_context)
+        # Try universal operator parsing first (handles ANY mathematical format)
+        try:
+            from .universal_operator_parser import UniversalOperatorParser
+            universal_parser = UniversalOperatorParser()
+            universal_params = universal_parser.extract_parameters_universal(user_query)
+            
+            # Use universal results if expressions found
+            if universal_params['expressions']:
+                print(f"DEBUG: Using universal operator parsing - found {len(universal_params['expressions'])} expressions")
+                for expr in universal_params['expressions']:
+                    print(f"  {expr['parameter']} {expr['operator']} {expr['value']}")
+                
+                depth_range = universal_params.get('depth_range')
+                depth_type = universal_params.get('depth_type')
+                temperature_range = universal_params.get('temperature_range')
+                salinity_range = universal_params.get('salinity_range')
+            else:
+                # Fallback to intelligent extraction (typo tolerant)
+                try:
+                    from .intelligent_parameter_extractor import IntelligentParameterExtractor
+                    intelligent_extractor = IntelligentParameterExtractor()
+                    intelligent_params = intelligent_extractor.extract_all_parameters(user_query)
+                    
+                    # Use intelligent results if available with high confidence
+                    if intelligent_params.get('depth_range') and intelligent_params['confidence_scores'].get('depth', 0) > 0.8:
+                        depth_range = intelligent_params['depth_range']
+                        depth_type = intelligent_params['depth_type']
+                        print(f"DEBUG: Using intelligent depth extraction: {depth_range}")
+                    else:
+                        # Fallback to traditional extraction
+                        depth_range, depth_type = self._extract_depth(query_lower, session_context)
+                    
+                    if intelligent_params.get('temperature_range') and intelligent_params['confidence_scores'].get('temperature', 0) > 0.8:
+                        temperature_range = intelligent_params['temperature_range']
+                        print(f"DEBUG: Using intelligent temperature extraction: {temperature_range}")
+                    else:
+                        temperature_range, salinity_range = self._extract_parameter_thresholds(query_lower)
+                    
+                    if intelligent_params.get('salinity_range') and intelligent_params['confidence_scores'].get('salinity', 0) > 0.8:
+                        salinity_range = intelligent_params['salinity_range']
+                        print(f"DEBUG: Using intelligent salinity extraction: {salinity_range}")
+                    elif not salinity_range:  # Only extract if not already found
+                        _, salinity_range = self._extract_parameter_thresholds(query_lower)
+                        
+                except Exception as e:
+                    print(f"DEBUG: Intelligent extraction failed, using fallback: {e}")
+                    # Fallback to traditional extraction
+                    depth_range, depth_type = self._extract_depth(query_lower, session_context)
+                    temperature_range, salinity_range = self._extract_parameter_thresholds(query_lower)
+                
+        except Exception as e:
+            print(f"DEBUG: Universal parsing failed, using intelligent fallback: {e}")
+            # Fallback to intelligent extraction
+            try:
+                from .intelligent_parameter_extractor import IntelligentParameterExtractor
+                intelligent_extractor = IntelligentParameterExtractor()
+                intelligent_params = intelligent_extractor.extract_all_parameters(user_query)
+                
+                if intelligent_params.get('depth_range'):
+                    depth_range = intelligent_params['depth_range']
+                    depth_type = intelligent_params['depth_type']
+                else:
+                    depth_range, depth_type = self._extract_depth(query_lower, session_context)
+                
+                temperature_range = intelligent_params.get('temperature_range')
+                salinity_range = intelligent_params.get('salinity_range')
+                
+                if not temperature_range and not salinity_range:
+                    temperature_range, salinity_range = self._extract_parameter_thresholds(query_lower)
+                    
+            except Exception as e2:
+                print(f"DEBUG: All extraction methods failed, using traditional: {e2}")
+                # Final fallback to traditional extraction
+                depth_range, depth_type = self._extract_depth(query_lower, session_context)
+                temperature_range, salinity_range = self._extract_parameter_thresholds(query_lower)
         
         # Extract data parameters
         float_ids = self._extract_float_ids(query_lower)
         parameters = self._extract_parameters(query_lower)
-
-        # Extract parameter thresholds - FIXED: Add temperature/salinity threshold extraction
-        temperature_range, salinity_range = self._extract_parameter_thresholds(query_lower)
 
         # Extract query characteristics
         is_analytical = self._is_analytical_query(query_lower)
@@ -282,7 +352,7 @@ class UnifiedQueryParser:
             "is_comparative": is_comparative,
             "is_chart_request": is_chart_request,
             "complexity_level": complexity_level,
-            "extraction_method": "heuristic",
+            "extraction_method": "intelligent_heuristic",
             "confidence_score": self._calculate_confidence_score(query_lower, location_name, date_range, depth_range)
         }
     
