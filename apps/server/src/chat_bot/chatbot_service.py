@@ -136,13 +136,13 @@ class ChatbotService:
             context_start = time.time()
 
             # Dynamically determine context size based on query complexity and expected data volume
-            base_context_size = 25
+            base_context_size = 15
             if parameter_context.complexity_level == "complex":
-                context_size = 75  # More context for complex queries
+                context_size = 40
             elif parameter_context.is_full_data_request:
-                context_size = 100  # Comprehensive context for full data requests
+                context_size = 60
             elif parameter_context.is_analytical:
-                context_size = 50  # Enhanced context for analytical queries
+                context_size = 30
             else:
                 context_size = base_context_size
 
@@ -852,6 +852,10 @@ class ChatbotService:
         filtered_results = db_results.copy()
 
         try:
+            # DEBUG: Check what temperature_range we have
+            print(f"DEBUG: _apply_parameter_specific_filtering - temperature_range: {parameter_context.temperature_range}")
+            print(f"DEBUG: _apply_parameter_specific_filtering - First 3 temps in db_results: {[r.get('temperature') for r in db_results[:3]]}")
+            
             # Apply temperature threshold filtering
             if parameter_context.temperature_range:
                 operator, temp_value = parameter_context.temperature_range

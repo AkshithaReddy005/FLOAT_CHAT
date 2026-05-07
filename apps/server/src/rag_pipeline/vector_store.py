@@ -26,52 +26,107 @@ class VectorStore:
                 "argo_data_enhanced",
                 embedding_function=self.embedding_function
             )
-            print("Using enhanced collection: argo_data_enhanced")
+            self.collection_name = "argo_data_enhanced"
+            print("Using enhanced collection: " + self.collection_name)
         except ValueError as e:
             if "embedding function" in str(e).lower():
                 print("Embedding function conflict detected, creating new enhanced collection")
                 # Delete old collection and create new one with enhanced embedding
                 try:
-                    self.client.delete_collection("argo_data_enhanced")
+                    self.client.delete_collection(self.collection_name)
                 except:
                     pass
                 self.collection = self.client.get_or_create_collection(
-                    "argo_data_enhanced",
+                    self.collection_name,
                     embedding_function=self.embedding_function
                 )
                 print("Created new enhanced collection")
             else:
                 raise e
 
+    @property
+    def embedding_function(self):
+        """Lazy loading property for embedding function"""
+        if self._embedding_function is None:
+            self._load_embedding_function()
+        return self._embedding_function
+
     def _setup_enhanced_embedding(self):
         """Setup enhanced embedding function optimized for scientific oceanographic data"""
+        # Lazy loading - only initialize when first used
+        self._embedding_function = None
+        self._embedding_setup_complete = False
+        print("Embedding function will be loaded on first use (lazy loading)")
+        
+        # Initialize analytics patterns
+        self.analytics_patterns = {
+            'temperature_ranges': {
+                'tropical': (25, 35),
+                'temperate': (15, 25),
+                'cold': (0, 15),
+                'deep_water': (-2, 5)
+            },
+            'salinity_ranges': {
+                'fresh': (30, 34),
+                'normal': (34, 36),
+                'hypersaline': (36, 40)
+            },
+            'depth_categories': {
+                'surface': (0, 50),
+                'thermocline': (50, 200),
+                'intermediate': (200, 1000),
+                'deep': (1000, 4000),
+                'abyssal': (4000, 11000)
+            },
+            'oceanographic_features': {
+                'upwelling_zones': ['high_productivity', 'cold_surface', 'nutrient_rich'],
+                'thermocline_patterns': ['strong_gradient', 'mixed_layer', 'stratification'],
+                'water_masses': ['surface_water', 'intermediate_water', 'deep_water', 'bottom_water']
+            }
+        }
+
+    def _load_embedding_function(self):
+        """Actually load the embedding function"""
+        if self._embedding_setup_complete:
+            return
+        
+        import time
+        start_time = time.time()
+        print("Loading embedding model (this may take a moment)...")
+
         try:
             # Try to use a better embedding model for scientific text if available
             # sentence-transformers models are excellent for domain-specific content
             try:
                 # Use all-MiniLM-L6-v2 which balances performance and quality for scientific text
-                self.embedding_function = embedding_functions.SentenceTransformerEmbeddingFunction(
+                self._embedding_function = embedding_functions.SentenceTransformerEmbeddingFunction(
                     model_name="all-MiniLM-L6-v2"
                 )
-                print("Using enhanced SentenceTransformer embedding model: all-MiniLM-L6-v2")
+                load_time = time.time() - start_time
+                print(f"Using enhanced SentenceTransformer embedding model: all-MiniLM-L6-v2 (loaded in {load_time:.2f}s)")
             except Exception as st_error:
                 print(f"SentenceTransformer not available: {st_error}")
                 try:
                     # Fallback to HuggingFace embedding if available
-                    self.embedding_function = embedding_functions.HuggingFaceEmbeddingFunction(
+                    self._embedding_function = embedding_functions.HuggingFaceEmbeddingFunction(
                         api_key=os.getenv("HUGGINGFACE_API_KEY"),
                         model_name="sentence-transformers/all-MiniLM-L6-v2"
                     )
-                    print("Using HuggingFace embedding model: all-MiniLM-L6-v2")
+                    load_time = time.time() - start_time
+                    print(f"Using HuggingFace embedding model: all-MiniLM-L6-v2 (loaded in {load_time:.2f}s)")
                 except Exception as hf_error:
                     print(f"HuggingFace embedding not available: {hf_error}")
                     # Use default ChromaDB embedding as final fallback
-                    self.embedding_function = embedding_functions.DefaultEmbeddingFunction()
-                    print("Using default ChromaDB embedding function")
+                    self._embedding_function = embedding_functions.DefaultEmbeddingFunction()
+                    load_time = time.time() - start_time
+                    print(f"Using default ChromaDB embedding function (loaded in {load_time:.2f}s)")
         except Exception as e:
             print(f"Error setting up embedding function: {e}")
-            self.embedding_function = embedding_functions.DefaultEmbeddingFunction()
-            print("Falling back to default ChromaDB embedding function")
+            self._embedding_function = embedding_functions.DefaultEmbeddingFunction()
+            load_time = time.time() - start_time
+            print(f"Falling back to default ChromaDB embedding function (loaded in {load_time:.2f}s)")
+        
+        self._embedding_setup_complete = True
 
         # Enhanced analytics patterns for intelligent embedding
         self.analytics_patterns = {
@@ -579,16 +634,20 @@ class VectorStore:
             return "deep_water"
     
     def _identify_oceanic_region(self, lat: float, lon: float) -> str:
-        """Identify oceanic region based on coordinates"""
+        """Identify oceanic region based on coordinates - updated for actual data coverage"""
         # Indian Ocean focus for ARGO data
         if 10 <= lat <= 30 and 60 <= lon <= 80:
             return "arabian_sea"
         elif -10 <= lat <= 10 and 60 <= lon <= 100:
             return "equatorial_indian_ocean"
-        elif -30 <= lat <= -10 and 60 <= lon <= 120:
+        elif -40 <= lat <= -10 and 20 <= lon <= 147:  # Expanded to match actual Southern Ocean data
             return "southern_indian_ocean"
-        elif -15 <= lat <= 15 and 40 <= lon <= 65:
+        elif -35 <= lat <= 25 and 20 <= lon <= 80:  # Expanded Western Indian Ocean
             return "western_indian_ocean"
+        elif -60 <= lat <= -30:  # Southern Ocean (Antarctic)
+            return "southern_ocean"
+        elif 60 <= lat <= 90:  # Arctic
+            return "arctic_ocean"
         else:
             return "indian_ocean_general"
     
@@ -862,39 +921,65 @@ class VectorStore:
     
     def _search_internal(self, query: str, n_results: int = 10, filters: Dict = None) -> Dict:
         """Simplified search: semantic search with basic metadata filtering fallback"""
+        import time
+        start_search = time.time()
         try:
             # Strategy 1: Try with filters if provided
             if filters:
                 try:
                     print(f"ChromaDB search with filters: {filters}")
+                    # PERFORMANCE OPTIMIZATION: Limit results aggressively for filtered queries
+                    optimized_n_results = min(n_results, 20)  # Cap at 20 for filtered queries
+                    
                     results = self.collection.query(
                         query_texts=[query],
-                        n_results=n_results,
+                        n_results=optimized_n_results,
                         where=filters,
                         include=["documents", "metadatas", "distances"]
                     )
 
                     # If we got results, return them
                     if results.get('documents') and results['documents'][0]:
-                        print(f"Filtered search successful: {len(results['documents'][0])} documents")
+                        search_time = time.time() - start_search
+                        result_count = len(results['documents'][0])
+                        print(f"Filtered search successful: {result_count} documents in {search_time:.2f}s")
+                        
+                        # Warn if we hit the limit
+                        if result_count >= optimized_n_results:
+                            print(f"WARNING: Hit result limit ({optimized_n_results}), more data may be available")
+                        
                         return results
                     else:
-                        print("Filtered search returned no results, trying basic semantic search")
+                        print("Filtered search returned no results.")
+                        # PERF OPTIMIZATION: Do not fall back to basic semantic search if filters were provided
+                        # as it's the primary cause of the 80s timeouts.
+                        return {
+                            'documents': [[]],
+                            'distances': [[]],
+                            'metadatas': [[]],
+                            'ids': [[]]
+                        }
                 except Exception as filter_error:
-                    print(f"Filtered search failed: {filter_error}, trying basic semantic search")
+                    print(f"Filtered search failed: {filter_error}")
+                    return {
+                        'documents': [[]],
+                        'distances': [[]],
+                        'metadatas': [[]],
+                        'ids': [[]]
+                    }
 
-            # Strategy 2: Basic semantic search without filters
-            print("Using basic semantic search")
+            # Strategy 2: Basic semantic search (Only used if no filters provided)
+            print("Using basic semantic search (no filters)")
             results = self.collection.query(
                 query_texts=[query],
                 n_results=n_results,
                 include=["documents", "metadatas", "distances"]
             )
-            print(f"Basic search returned: {len(results['documents'][0]) if results.get('documents') and results['documents'][0] else 0} documents")
+            print(f"Basic search completed in {(time.time() - start_search):.2f}s, returned: {len(results['documents'][0]) if results.get('documents') and results['documents'][0] else 0} documents")
             return results
 
         except Exception as e:
-            print(f"Vector store search failed: {e}")
+            print(f"Vector store search failed after {(time.time() - start_search):.2f}s: {e}")
             # Return empty results structure
             return {
                 'documents': [[]],
