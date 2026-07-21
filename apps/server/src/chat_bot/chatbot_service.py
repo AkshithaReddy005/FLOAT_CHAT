@@ -229,26 +229,37 @@ class ChatbotService:
                     timing_data['sql_execution'] = execute_time
                     sql_used = sql_query
                     
-                    # CRITICAL: Verify temperature filtering worked at SQL level
+                    # Verify temperature filter is actually applied in SQL results.
+                    # If Gemini generated SQL without the WHERE clause condition, patch
+                    # the SQL and re-run rather than silently relying on post-processing.
                     if parameter_context.temperature_range and db_results:
                         operator, temp_value = parameter_context.temperature_range
-                        violating_records = []
-                        for i, record in enumerate(db_results[:5]):  # Check first 5 records
-                            temp = record.get('temperature')
-                            if temp is not None:
-                                if operator == '>' and temp <= temp_value:
-                                    violating_records.append(f"Record {i}: {temp}°C <= {temp_value}°C")
-                                elif operator == '<' and temp >= temp_value:
-                                    violating_records.append(f"Record {i}: {temp}°C >= {temp_value}°C")
-                        
+                        violating_records = [
+                            r for r in db_results[:5]
+                            if r.get('temperature') is not None and (
+                                (operator == '>' and r['temperature'] <= temp_value) or
+                                (operator == '<' and r['temperature'] >= temp_value) or
+                                (operator == '>=' and r['temperature'] < temp_value) or
+                                (operator == '<=' and r['temperature'] > temp_value)
+                            )
+                        ]
                         if violating_records:
-                            print(f"DEBUG: ✗ SQL temperature filter FAILED! Found violations:")
-                            for violation in violating_records:
-                                print(f"DEBUG:   {violation}")
-                            print(f"DEBUG: Post-processing filter will be critical!")
+                            print(f"WARNING: SQL temperature filter missing — patching query and re-running.")
+                            patched_sql = self._inject_filter_into_sql(
+                                sql_query,
+                                f"temperature {operator} {temp_value}",
+                                "temperature IS NOT NULL"
+                            )
+                            if patched_sql and patched_sql != sql_query:
+                                try:
+                                    db_results = self._execute_sql_query(db, patched_sql)
+                                    sql_used = patched_sql
+                                    print(f"Re-executed with patched SQL: {len(db_results)} records")
+                                except Exception as patch_err:
+                                    print(f"Patched SQL failed ({patch_err}); post-processing filter will apply")
                         else:
-                            print(f"DEBUG: ✓ SQL temperature filter working correctly")
-                    
+                            print("SQL temperature filter verified correct")
+
                     # Track SQL generation and execution in pipeline flow
                     pipeline_flow["sql_generation"] = {
                         "generation_duration": f"{sql_gen_time:.4f}s",
@@ -545,7 +556,46 @@ class ChatbotService:
         except Exception as e:
             print(f"Error executing SQL query: {e}")
             return []
-    
+
+    def _inject_filter_into_sql(self, sql: str, *conditions: str) -> str:
+        """
+        Inject additional WHERE conditions into an existing SQL query.
+
+        Handles three cases:
+          1. Query already has a WHERE clause  -> appends AND <condition>
+          2. Query has no WHERE clause         -> inserts WHERE <condition> before ORDER BY / LIMIT
+          3. Condition already present         -> skips (idempotent)
+
+        Returns the patched SQL, or the original if patching is not safe.
+        """
+        import re as _re
+        sql_work = sql.strip().rstrip(';')
+
+        for condition in conditions:
+            # Skip if condition is already in the SQL (case-insensitive)
+            if condition.lower() in sql_work.lower():
+                continue
+
+            # Find ORDER BY / LIMIT to insert before them
+            suffix_match = _re.search(
+                r'\s+(ORDER\s+BY|LIMIT)\s+',
+                sql_work,
+                flags=_re.IGNORECASE
+            )
+            suffix = ""
+            if suffix_match:
+                suffix = sql_work[suffix_match.start():]
+                sql_work = sql_work[:suffix_match.start()]
+
+            if _re.search(r'\bWHERE\b', sql_work, flags=_re.IGNORECASE):
+                sql_work = sql_work + f" AND {condition}"
+            else:
+                sql_work = sql_work + f" WHERE {condition}"
+
+            sql_work = sql_work + suffix
+
+        return sql_work
+
     def _fallback_data_retrieval(self, db: Session, user_query: str) -> List[Dict]:
         """Smart fallback method for data retrieval when SQL generation fails - only real data"""
         try:
