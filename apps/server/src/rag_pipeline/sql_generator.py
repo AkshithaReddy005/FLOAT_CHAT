@@ -6,7 +6,6 @@ Generates SQL queries from natural language using LLM or rule-based approaches.
 import os
 import re
 import asyncio
-import random
 from typing import Dict, List, Optional
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
@@ -25,11 +24,6 @@ class SQLGenerator:
     def __init__(self):
         self.gemini_api_key = os.getenv("GEMINI_API_KEY")
         self.gemini_model = os.getenv("GEMINI_SQL_MODEL", "gemini-2.0-flash")
-
-        # Thinking delay configuration
-        self.thinking_enabled = os.getenv("SQL_THINKING_ENABLED", "true").lower() == "true"
-        self.base_thinking_delay = float(os.getenv("SQL_BASE_THINKING_DELAY", "2.0"))  # 2 seconds base
-        self.thinking_variance = float(os.getenv("SQL_THINKING_VARIANCE", "1.0"))  # ±1 second variance
 
         # Initialize SQL validator for consistency checking
         try:
@@ -53,51 +47,28 @@ class SQLGenerator:
             self.use_gemini = False
             print("SQL Generator: Using rule-based approach only")
 
-    async def _thinking_delay(self, complexity_multiplier: float = 1.0) -> None:
-        """Add deliberate thinking delay for better perceived accuracy"""
-        if not self.thinking_enabled:
-            return
-
-        # Calculate delay with random variance
-        delay = self.base_thinking_delay * complexity_multiplier
-        variance = random.uniform(-self.thinking_variance, self.thinking_variance)
-        final_delay = max(0.5, delay + variance)  # Minimum 0.5 seconds
-
-        print(f"SQL Generator: Thinking for {final_delay:.2f} seconds...")
-        await asyncio.sleep(final_delay)
-
     async def generate_sql(self, user_query: str, query_classification: Dict,
                           context_results: Dict = None, session_context: dict = None) -> Optional[str]:
         """Generate SQL query based on user input and classification"""
-        
         if self.use_gemini and query_classification.get("is_complex", False):
-            # Use LLM for complex queries
             return await self._generate_with_gemini(user_query, context_results, session_context)
         else:
-            # Use rule-based approach for simple queries
             return self._generate_rule_based(user_query, query_classification, session_context)
-    
+
     async def generate_sql_from_context(self, parameter_context) -> Optional[str]:
-        """Generate SQL query from unified parameter context (NEW UNIFIED METHOD)"""
-        
+        """Generate SQL query from unified parameter context"""
         # Always use rule-based generation for comparative queries to ensure
         # deterministic region-wise aggregation SQL is produced.
         if getattr(parameter_context, "is_comparative", False):
             return await self._generate_rule_based_from_context(parameter_context)
 
         if self.use_gemini and parameter_context.complexity_level == "complex":
-            # Use LLM for complex queries (non-comparative)
             return await self._generate_with_gemini_from_context(parameter_context)
         else:
-            # Use rule-based approach for simple queries
             return await self._generate_rule_based_from_context(parameter_context)
-    
+
     async def _generate_with_gemini_from_context(self, parameter_context) -> Optional[str]:
         """Generate SQL using Gemini LLM from parameter context"""
-
-        # Add thinking delay based on complexity
-        complexity_multiplier = 1.5 if parameter_context.complexity_level == "complex" else 1.0
-        await self._thinking_delay(complexity_multiplier)
 
         # Build prompt from parameter context
         context_summary = f"Parameters: {parameter_context.get_summary()}"
@@ -130,9 +101,6 @@ Generate ONLY the SQL query:"""
     
     async def _generate_with_gemini(self, user_query: str, context_results: Dict = None, session_context: dict = None) -> Optional[str]:
         """Generate SQL using Gemini LLM"""
-
-        # Add thinking delay for complex query processing
-        await self._thinking_delay(1.2)  # Slightly longer for manual queries
 
         # Extract context information if available
         context_summary = ""
@@ -410,10 +378,7 @@ Generate ONLY the SQL query (no explanation or markdown):"""
 
         # CRITICAL: Validate the generated SQL against the parameter context
         if self.sql_validator:
-            # Add validation thinking delay
             print("SQL Generator: Validating generated query...")
-            await self._thinking_delay(0.5)  # Brief validation delay
-
             is_valid, violations = self.sql_validator.validate_sql_against_context(sql, parameter_context)
             if not is_valid:
                 print(f"WARNING: Generated SQL failed validation!")
