@@ -6,7 +6,39 @@ from datetime import datetime
 from typing import List, Dict, Optional
 import time
 
+# gsw (TEOS-10 Gibbs SeaWater toolbox) for accurate pressure → depth conversion.
+# It is listed in requirements.txt; if somehow missing we fall back to the
+# simple linear approximation (1 dbar ≈ 1 m) which is accurate to ~1 %.
+try:
+    import gsw as _gsw
+    _GSW_AVAILABLE = True
+except ImportError:
+    _gsw = None
+    _GSW_AVAILABLE = False
+    print("Warning: gsw not available – using linear pressure≈depth approximation")
+
 class NetCDFProcessor:
+    @staticmethod
+    def _pressure_to_depth_m(pressure_dbar: float, latitude: float = 0.0) -> float:
+        """
+        Convert pressure in dbar to depth in metres using the TEOS-10 formula.
+
+        gsw.z_from_p() returns a *negative* value (depth below surface is
+        negative by convention in TEOS-10), so we take the absolute value.
+
+        If gsw is unavailable we apply the well-known linear approximation:
+            depth_m ≈ pressure_dbar × 0.9927 + 0.017  (< 1 % error < 6000 m)
+        which is still vastly more accurate than the old depth = pressure.
+        """
+        if _GSW_AVAILABLE:
+            try:
+                z = _gsw.z_from_p(float(pressure_dbar), float(latitude))
+                return abs(float(z))
+            except Exception:
+                pass  # fall through to approximation
+        # Linear approximation (Saunders & Fofonoff 1976)
+        return float(pressure_dbar) * 0.9927 + 0.017
+
     @staticmethod
     def process_argo_file(file_path: str) -> List[Dict]:
         """Process ARGO NetCDF file with optimized performance for large files"""
@@ -249,15 +281,17 @@ class NetCDFProcessor:
         # Create measurements in batch
         measurements = []
         for i in range(len(valid_indices)):
+            pres_val = float(valid_pressure_vals[i])
+            depth_m  = NetCDFProcessor._pressure_to_depth_m(pres_val, lat)
             measurements.append({
                 'float_id': float_id,
                 'latitude': lat,
                 'longitude': lon,
                 'date': timestamp,
-                'depth': valid_pressure_vals[i],
-                'temperature': valid_temp_vals[i],
-                'salinity': valid_sal_vals[i],
-                'pressure': valid_pressure_vals[i]
+                'depth': depth_m,          # metres (converted from dbar)
+                'temperature': float(valid_temp_vals[i]),
+                'salinity': float(valid_sal_vals[i]),
+                'pressure': pres_val       # original dbar value preserved
             })
 
         print(f"1D Profile: Created {len(measurements)} valid measurement records")
@@ -303,15 +337,18 @@ class NetCDFProcessor:
             else:
                 float_id = NetCDFProcessor._fallback_float_id(int(prof), lat, lon)
 
+            pres_val = float(valid_pressure_vals[i])
+            depth_m  = NetCDFProcessor._pressure_to_depth_m(pres_val, lat)
+
             measurements.append({
                 'float_id': float_id,
                 'latitude': lat,
                 'longitude': lon,
                 'date': timestamp,
-                'depth': valid_pressure_vals[i],
-                'temperature': valid_temp_vals[i],
-                'salinity': valid_sal_vals[i],
-                'pressure': valid_pressure_vals[i]
+                'depth': depth_m,          # metres (converted from dbar)
+                'temperature': float(valid_temp_vals[i]),
+                'salinity': float(valid_sal_vals[i]),
+                'pressure': pres_val       # original dbar value preserved
             })
 
         print(f"2D Profiles: Created {len(measurements)} valid measurement records")
