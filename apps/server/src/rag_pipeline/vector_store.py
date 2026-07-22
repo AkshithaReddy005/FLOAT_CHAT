@@ -641,24 +641,68 @@ class VectorStore:
                 return "intermediate_water_cool"
         else:
             return "deep_water"
-    
+            
     def _identify_oceanic_region(self, lat: float, lon: float) -> str:
-        """Identify oceanic region based on coordinates - updated for actual data coverage"""
-        # Indian Ocean focus for ARGO data
-        if 10 <= lat <= 30 and 60 <= lon <= 80:
+        """Identify oceanic region based on coordinates — global coverage.
+
+        Regions are checked from most-specific (marginal seas) to least-specific
+        (open ocean basins) so that, e.g., the Arabian Sea is returned instead of
+        the generic 'northern_indian_ocean'.
+        """
+        # ── Marginal / enclosed seas (highest priority) ────────────────────
+        if 24 <= lat <= 30 and 48 <= lon <= 57:
+            return "persian_gulf"
+        if 12 <= lat <= 30 and 32 <= lon <= 44:
+            return "red_sea"
+        if 11 <= lat <= 16 and 43 <= lon <= 52:
+            return "gulf_of_aden"
+        if 7 <= lat <= 20 and 92 <= lon <= 100:
+            return "andaman_sea"
+        if 5 <= lat <= 22 and 80 <= lon <= 100:
+            return "bay_of_bengal"
+        if 5 <= lat <= 25 and 55 <= lon <= 78:
             return "arabian_sea"
-        elif -10 <= lat <= 10 and 60 <= lon <= 100:
-            return "equatorial_indian_ocean"
-        elif -40 <= lat <= -10 and 20 <= lon <= 147:  # Expanded to match actual Southern Ocean data
-            return "southern_indian_ocean"
-        elif -35 <= lat <= 25 and 20 <= lon <= 80:  # Expanded Western Indian Ocean
-            return "western_indian_ocean"
-        elif -60 <= lat <= -30:  # Southern Ocean (Antarctic)
-            return "southern_ocean"
-        elif 60 <= lat <= 90:  # Arctic
+        if 0 <= lat <= 25 and 99 <= lon <= 122:
+            return "south_china_sea"
+        if 8 <= lat <= 23 and -87 <= lon <= -60:
+            return "caribbean_sea"
+        if 18 <= lat <= 30 and -98 <= lon <= -80:
+            return "gulf_of_mexico"
+        if 30 <= lat <= 47 and -6 <= lon <= 42:
+            return "mediterranean_sea"
+        if 51 <= lat <= 62 and -4 <= lon <= 10:
+            return "north_sea"
+        if 53 <= lat <= 66 and 10 <= lon <= 30:
+            return "baltic_sea"
+
+        # ── Open ocean basins ──────────────────────────────────────────────
+        # Polar
+        if lat >= 66:
             return "arctic_ocean"
-        else:
-            return "indian_ocean_general"
+        if lat <= -45:
+            return "southern_ocean"
+
+        # Indian Ocean sub-regions
+        if -5 <= lat <= 5 and 40 <= lon <= 100:
+            return "equatorial_indian_ocean"
+        if 0 <= lat <= 30 and 20 <= lon <= 100:
+            return "northern_indian_ocean"
+        if -45 <= lat <= 0 and 20 <= lon <= 147:
+            return "southern_indian_ocean"
+
+        # Pacific Ocean
+        if 0 <= lat <= 65 and (120 <= lon <= 180 or -180 <= lon <= -100):
+            return "north_pacific"
+        if -45 <= lat <= 0 and (140 <= lon <= 180 or -180 <= lon <= -70):
+            return "south_pacific"
+
+        # Atlantic Ocean
+        if 0 <= lat <= 65 and -80 <= lon <= 0:
+            return "north_atlantic"
+        if -45 <= lat <= 0 and -70 <= lon <= 20:
+            return "south_atlantic"
+
+        return "open_ocean"
     
     def _get_season_from_date(self, date_str: str) -> str:
         """Extract season from date string"""
