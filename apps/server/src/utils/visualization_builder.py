@@ -13,14 +13,51 @@ from utils.chart_request_processor import ChartRequestProcessor
 class VisualizationBuilder:
     def __init__(self):
         self.chart_request_processor = ChartRequestProcessor()
+
+        # ── Chart decision thresholds ────────────────────────────────────────
+        # All values are documented with their rationale so they can be tuned
+        # without needing to trace through the decision logic.
         self.chart_decision_thresholds = {
-            'min_points_for_map': 10,          
-            'min_points_for_heatmap': 50,       
-            'min_depth_levels': 8,               
-            'min_time_points': 5,               
-            'max_single_series_points': 100,    
-            'geographic_spread_threshold': 1.0,  
-            'min_data_quality_score': 0.6       #Minimum data quality threshold
+
+            # Minimum number of data points to render a geographic map overlay.
+            # Below 10 points the map looks empty and offers no spatial insight;
+            # a simple summary table is more informative at that scale.
+            'min_points_for_map': 10,
+
+            # Minimum number of data points to render a heatmap.
+            # Heatmaps need enough density to produce meaningful colour gradients;
+            # 50 points distributes reasonably across a 5×10 degree grid cell.
+            'min_points_for_heatmap': 50,
+
+            # Minimum number of *distinct depth levels* required to render a
+            # depth-profile chart.  ARGO profiles sample every ~10 dbar, so
+            # 8 levels ≈ 80 dbar of coverage — enough to show the thermocline.
+            # Fewer levels produce a nearly flat line that misleads the user.
+            'min_depth_levels': 8,
+
+            # Minimum number of distinct calendar days required to render a
+            # time-series chart.  5 days gives a visible trend line; fewer
+            # points are better displayed as a bar/summary chart.
+            'min_time_points': 5,
+
+            # Maximum data points to plot in a single chart series before
+            # downsampling or aggregation is recommended.  Beyond ~100 points
+            # per series, the browser SVG renderer starts to stutter on
+            # lower-end devices.
+            'max_single_series_points': 100,
+
+            # Geographic spread threshold (degrees, Euclidean in lat-lon space)
+            # below which data are considered "local" rather than "regional".
+            # sqrt(1² + 1²) ≈ 1.41, so 1.0 roughly corresponds to a 1°×1°
+            # bounding box — about 110 km × 110 km at the equator.
+            # Points within this spread show a map pin instead of a scatter map.
+            'geographic_spread_threshold': 1.0,
+
+            # Minimum data-quality score (0.0–1.0) computed from the fraction of
+            # non-null values across all parameter columns.  Scores below 0.6
+            # indicate more than 40 % of values are missing, making most chart
+            # types misleading.  In that case we fall back to a plain data table.
+            'min_data_quality_score': 0.6,
         }
     
     def _analyze_data_patterns(self, db_results: List[Dict], query_classification: Dict) -> Dict:
