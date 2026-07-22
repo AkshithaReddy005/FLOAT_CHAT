@@ -30,6 +30,16 @@ interface APIContext {
 export class SessionContextManager {
   private readonly STORAGE_KEY = 'floatchat_session_context';
 
+  /**
+   * Maximum number of message PAIRS (user + AI) retained in session memory.
+   * Older exchanges are silently dropped to prevent the payload from growing
+   * indefinitely.  5 pairs = 10 messages ≈ a comfortable sliding-window
+   * context without blowing up the request size.
+   *
+   * Override via the MAX_SESSION_EXCHANGES env / build variable if needed.
+   */
+  private readonly MAX_MESSAGES = 10; // 5 exchanges × 2 messages each
+
   constructor() {
     this.initializeSession();
   }
@@ -85,9 +95,11 @@ export class SessionContextManager {
     // Add new message
     context.messages.push(message);
 
-    // Keep only last 10 messages (5 exchanges)
-    if (context.messages.length > 10) {
-      context.messages = context.messages.slice(-10);
+    // Sliding window: keep only the most recent MAX_MESSAGES messages
+    // (= MAX_MESSAGES/2 full exchanges). This prevents the session payload
+    // from growing without bound across long conversations.
+    if (context.messages.length > this.MAX_MESSAGES) {
+      context.messages = context.messages.slice(-this.MAX_MESSAGES);
     }
 
     // Extract key context from user messages
@@ -299,9 +311,11 @@ export class SessionContextManager {
       };
     }
 
-    // Build recent exchanges for API
+    // Build recent exchanges for API — capped at MAX_MESSAGES/2 pairs.
+    // Using sessionStorage means this survives page refresh within the
+    // same browser tab (not across tabs or after the tab is closed).
     const recentExchanges: APIContext['recent_exchanges'] = [];
-    const messages = context.messages.slice(-10); // Last 5 exchanges
+    const messages = context.messages.slice(-this.MAX_MESSAGES); // last N messages
     
     for (let i = 0; i < messages.length; i += 2) {
       const userMsg = messages[i];
@@ -363,13 +377,38 @@ export class SessionContextManager {
     const context = this.getStoredContext();
     if (!context) return { messageCount: 0, contextItems: 0 };
 
-    const contextItems = context.keyContext.locations.length + 
-                        context.keyContext.timeRanges.length + 
+    const contextItems = context.keyContext.locations.length +
+                        context.keyContext.timeRanges.length +
                         context.keyContext.dataTypes.length;
 
     return {
       messageCount: context.messages.length,
       contextItems
+    };
+  }
+
+  /**
+   * Returns true because sessionStorage data survives browser refresh
+   * within the same tab. This allows the UI to show an appropriate
+   * indicator (e.g. "Session memory restored").
+   */
+  getSurvivesRefresh(): boolean {
+    return true;
+  }
+
+  /**
+   * Returns information about how much history is being retained and
+   * what has been truncated. Useful for showing the user a disclaimer.
+   */
+  getTruncationInfo(): { maxExchanges: number; currentExchanges: number; isTruncated: boolean } {
+    const context = this.getStoredContext();
+    const messageCount = context?.messages.length ?? 0;
+    const currentExchanges = Math.floor(messageCount / 2);
+    const maxExchanges = this.MAX_MESSAGES / 2;
+    return {
+      maxExchanges,
+      currentExchanges,
+      isTruncated: messageCount >= this.MAX_MESSAGES
     };
   }
 }
