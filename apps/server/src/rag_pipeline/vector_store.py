@@ -94,38 +94,47 @@ class VectorStore:
         start_time = time.time()
         print("Loading embedding model (this may take a moment)...")
 
+        # Model priority for oceanographic/scientific text:
+        #
+        #  1. all-mpnet-base-v2  (768-dim) — best semantic quality, stronger on domain jargon,
+        #     variable names (TEMP, PSAL, PRES) and coordinate text than the tiny MiniLM model.
+        #     ~420 MB on first download; cached afterwards.
+        #
+        #  2. all-MiniLM-L6-v2  (384-dim) — good quality, half the memory footprint.
+        #     Use this in memory-constrained environments by setting
+        #     CHROMA_EMBEDDING_MODEL=all-MiniLM-L6-v2 in the environment.
+        #
+        #  3. DefaultEmbeddingFunction — ChromaDB's built-in onnx model; smallest,
+        #     lowest quality. Last resort when sentence-transformers is unavailable.
+        preferred_model = os.getenv("CHROMA_EMBEDDING_MODEL", "all-mpnet-base-v2")
         try:
-            # Try to use a better embedding model for scientific text if available
-            # sentence-transformers models are excellent for domain-specific content
+            self._embedding_function = embedding_functions.SentenceTransformerEmbeddingFunction(
+                model_name=preferred_model
+            )
+            load_time = time.time() - start_time
+            print(f"Using SentenceTransformer embedding model: {preferred_model} (loaded in {load_time:.2f}s)")
+        except Exception as primary_err:
+            print(f"Could not load preferred model '{preferred_model}': {primary_err}")
+            # Fallback 1: smaller MiniLM model
+            fallback_model = "all-MiniLM-L6-v2"
             try:
-                # Use all-MiniLM-L6-v2 which balances performance and quality for scientific text
                 self._embedding_function = embedding_functions.SentenceTransformerEmbeddingFunction(
-                    model_name="all-MiniLM-L6-v2"
+                    model_name=fallback_model
                 )
                 load_time = time.time() - start_time
-                print(f"Using enhanced SentenceTransformer embedding model: all-MiniLM-L6-v2 (loaded in {load_time:.2f}s)")
-            except Exception as st_error:
-                print(f"SentenceTransformer not available: {st_error}")
-                try:
-                    # Fallback to HuggingFace embedding if available
-                    self._embedding_function = embedding_functions.HuggingFaceEmbeddingFunction(
-                        api_key=os.getenv("HUGGINGFACE_API_KEY"),
-                        model_name="sentence-transformers/all-MiniLM-L6-v2"
-                    )
-                    load_time = time.time() - start_time
-                    print(f"Using HuggingFace embedding model: all-MiniLM-L6-v2 (loaded in {load_time:.2f}s)")
-                except Exception as hf_error:
-                    print(f"HuggingFace embedding not available: {hf_error}")
-                    # Use default ChromaDB embedding as final fallback
-                    self._embedding_function = embedding_functions.DefaultEmbeddingFunction()
-                    load_time = time.time() - start_time
-                    print(f"Using default ChromaDB embedding function (loaded in {load_time:.2f}s)")
+                print(f"Fallback: using SentenceTransformer model: {fallback_model} (loaded in {load_time:.2f}s)")
+            except Exception as fallback_err:
+                print(f"SentenceTransformer not available ({fallback_err}); using ChromaDB default embedding")
+                # Fallback 2: ChromaDB's built-in onnx model
+                self._embedding_function = embedding_functions.DefaultEmbeddingFunction()
+                load_time = time.time() - start_time
+                print(f"Using ChromaDB default embedding function (loaded in {load_time:.2f}s)")
         except Exception as e:
-            print(f"Error setting up embedding function: {e}")
+            print(f"Unexpected error setting up embedding function: {e}")
             self._embedding_function = embedding_functions.DefaultEmbeddingFunction()
             load_time = time.time() - start_time
-            print(f"Falling back to default ChromaDB embedding function (loaded in {load_time:.2f}s)")
-        
+            print(f"Falling back to ChromaDB default embedding function (loaded in {load_time:.2f}s)")
+
         self._embedding_setup_complete = True
 
         # Enhanced analytics patterns for intelligent embedding

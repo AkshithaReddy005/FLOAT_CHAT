@@ -37,3 +37,5 @@ spectrum>=0.8.0
 
 # Marine/oceanographic specific
 gsw>=3.6.0
+# Embedding model for ChromaDB (default: all-mpnet-base-v2, configurable via CHROMA_EMBEDDING_MODEL)
+sentence-transformers>=2.7.0
