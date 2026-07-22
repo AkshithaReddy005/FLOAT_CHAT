@@ -51,20 +51,71 @@ class UnifiedQueryParser:
                 print(f"Warning: Could not initialize LLM extractor: {e}")
                 self.extraction_strategy = "heuristic_only"
         
-        # Fallback location definitions (kept for heuristic mode)
+        # Fallback location bounds for heuristic mode.
+        # Covers all major ocean basins, marginal seas, and key coastal cities
+        # so that common queries resolve instantly without calling the LLM.
+        # Bounds follow standard ARGO / oceanographic region conventions.
         self.location_bounds = {
-            "mumbai": {"lat_min": 18, "lat_max": 20, "lon_min": 72, "lon_max": 74},
-            "bombay": {"lat_min": 18, "lat_max": 20, "lon_min": 72, "lon_max": 74},
-            "arabian sea": {"lat_min": 10, "lat_max": 25, "lon_min": 65, "lon_max": 75},
-            "indian ocean": {"lat_min": -40, "lat_max": 30, "lon_min": 20, "lon_max": 120},
-            "northern arabian sea": {"lat_min": 20, "lat_max": 25, "lon_min": 65, "lon_max": 75},
-            "southern arabian sea": {"lat_min": 10, "lat_max": 20, "lon_min": 65, "lon_max": 75},
-            "western indian ocean": {"lat_min": -30, "lat_max": 30, "lon_min": 20, "lon_max": 70},  # Added western Indian Ocean
-            "eastern indian ocean": {"lat_min": -30, "lat_max": 30, "lon_min": 70, "lon_max": 120},  # Added eastern Indian Ocean
-            "northern indian ocean": {"lat_min": 0, "lat_max": 30, "lon_min": 40, "lon_max": 100},   # Added northern Indian Ocean
-            "southern indian ocean": {"lat_min": -40, "lat_max": 0, "lon_min": 20, "lon_max": 120},  # Added southern Indian Ocean
-            "coastal": {"lat_min": 18, "lat_max": 22, "lon_min": 70, "lon_max": 74},
-            "offshore": {"lat_min": 15, "lat_max": 25, "lon_min": 65, "lon_max": 72}
+            # ── Indian Ocean sub-regions ──────────────────────────────────
+            "arabian sea":           {"lat_min": 5,   "lat_max": 25,  "lon_min": 55,  "lon_max": 78},
+            "northern arabian sea":  {"lat_min": 20,  "lat_max": 25,  "lon_min": 60,  "lon_max": 78},
+            "southern arabian sea":  {"lat_min": 5,   "lat_max": 20,  "lon_min": 55,  "lon_max": 75},
+            "bay of bengal":         {"lat_min": 5,   "lat_max": 22,  "lon_min": 80,  "lon_max": 100},
+            "northern bay of bengal":{"lat_min": 15,  "lat_max": 22,  "lon_min": 80,  "lon_max": 95},
+            "southern bay of bengal":{"lat_min": 5,   "lat_max": 15,  "lon_min": 80,  "lon_max": 100},
+            "lakshadweep sea":       {"lat_min": 8,   "lat_max": 15,  "lon_min": 72,  "lon_max": 78},
+            "indian ocean":          {"lat_min": -60, "lat_max": 30,  "lon_min": 20,  "lon_max": 147},
+            "western indian ocean":  {"lat_min": -30, "lat_max": 30,  "lon_min": 20,  "lon_max": 70},
+            "eastern indian ocean":  {"lat_min": -30, "lat_max": 30,  "lon_min": 70,  "lon_max": 120},
+            "northern indian ocean": {"lat_min": 0,   "lat_max": 30,  "lon_min": 40,  "lon_max": 100},
+            "southern indian ocean": {"lat_min": -60, "lat_max": 0,   "lon_min": 20,  "lon_max": 147},
+            "equatorial indian ocean":{"lat_min": -5, "lat_max": 5,   "lon_min": 40,  "lon_max": 100},
+            "andaman sea":           {"lat_min": 7,   "lat_max": 20,  "lon_min": 92,  "lon_max": 100},
+            "gulf of aden":          {"lat_min": 11,  "lat_max": 16,  "lon_min": 43,  "lon_max": 52},
+            "red sea":               {"lat_min": 12,  "lat_max": 30,  "lon_min": 32,  "lon_max": 44},
+            "persian gulf":          {"lat_min": 24,  "lat_max": 30,  "lon_min": 48,  "lon_max": 57},
+
+            # ── Pacific Ocean ─────────────────────────────────────────────
+            "pacific ocean":         {"lat_min": -60, "lat_max": 65,  "lon_min": -180, "lon_max": -70},
+            "north pacific":         {"lat_min": 0,   "lat_max": 65,  "lon_min": 120,  "lon_max": -120},
+            "south pacific":         {"lat_min": -60, "lat_max": 0,   "lon_min": 140,  "lon_max": -70},
+            "tropical pacific":      {"lat_min": -23, "lat_max": 23,  "lon_min": 120,  "lon_max": -80},
+            "east pacific":          {"lat_min": -60, "lat_max": 60,  "lon_min": -150, "lon_max": -70},
+            "west pacific":          {"lat_min": -30, "lat_max": 60,  "lon_min": 120,  "lon_max": 180},
+            "south china sea":       {"lat_min": 0,   "lat_max": 25,  "lon_min": 99,   "lon_max": 122},
+            "coral sea":             {"lat_min": -26, "lat_max": -10, "lon_min": 142,  "lon_max": 165},
+            "philippine sea":        {"lat_min": 10,  "lat_max": 30,  "lon_min": 125,  "lon_max": 145},
+
+            # ── Atlantic Ocean ────────────────────────────────────────────
+            "atlantic ocean":        {"lat_min": -60, "lat_max": 65,  "lon_min": -80,  "lon_max": 20},
+            "north atlantic":        {"lat_min": 0,   "lat_max": 65,  "lon_min": -80,  "lon_max": 0},
+            "south atlantic":        {"lat_min": -60, "lat_max": 0,   "lon_min": -70,  "lon_max": 20},
+            "tropical atlantic":     {"lat_min": -23, "lat_max": 23,  "lon_min": -60,  "lon_max": 15},
+            "caribbean sea":         {"lat_min": 8,   "lat_max": 23,  "lon_min": -87,  "lon_max": -60},
+            "gulf of mexico":        {"lat_min": 18,  "lat_max": 30,  "lon_min": -98,  "lon_max": -80},
+            "mediterranean sea":     {"lat_min": 30,  "lat_max": 47,  "lon_min": -6,   "lon_max": 42},
+            "mediterranean":         {"lat_min": 30,  "lat_max": 47,  "lon_min": -6,   "lon_max": 42},
+            "north sea":             {"lat_min": 51,  "lat_max": 62,  "lon_min": -4,   "lon_max": 10},
+            "baltic sea":            {"lat_min": 53,  "lat_max": 66,  "lon_min": 10,   "lon_max": 30},
+
+            # ── Southern / Polar ──────────────────────────────────────────
+            "southern ocean":        {"lat_min": -80, "lat_max": -45, "lon_min": -180, "lon_max": 180},
+            "antarctic":             {"lat_min": -90, "lat_max": -60, "lon_min": -180, "lon_max": 180},
+            "arctic ocean":          {"lat_min": 66,  "lat_max": 90,  "lon_min": -180, "lon_max": 180},
+
+            # ── Cities / coastal reference points ─────────────────────────
+            "mumbai":    {"lat_min": 18.0, "lat_max": 20.0, "lon_min": 72.0, "lon_max": 74.0},
+            "bombay":    {"lat_min": 18.0, "lat_max": 20.0, "lon_min": 72.0, "lon_max": 74.0},
+            "chennai":   {"lat_min": 12.5, "lat_max": 14.0, "lon_min": 79.5, "lon_max": 81.0},
+            "kolkata":   {"lat_min": 21.5, "lat_max": 23.0, "lon_min": 87.5, "lon_max": 89.0},
+            "goa":       {"lat_min": 14.8, "lat_max": 16.0, "lon_min": 73.5, "lon_max": 74.5},
+            "kochi":     {"lat_min": 9.5,  "lat_max": 10.5, "lon_min": 75.5, "lon_max": 76.5},
+            "colombo":   {"lat_min": 6.5,  "lat_max": 7.5,  "lon_min": 79.5, "lon_max": 80.5},
+            "dhaka":     {"lat_min": 23.0, "lat_max": 24.0, "lon_min": 90.0, "lon_max": 91.0},
+
+            # ── Generic proximity terms (India-centric default) ───────────
+            "coastal":   {"lat_min": 18, "lat_max": 22, "lon_min": 70, "lon_max": 74},
+            "offshore":  {"lat_min": 15, "lat_max": 25, "lon_min": 65, "lon_max": 72},
         }
     
     def parse_query(self, user_query: str, session_context: Optional[Dict] = None, 
