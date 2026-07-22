@@ -3,6 +3,7 @@ Query Classification Module
 Classifies user queries to determine if they need ARGO data and what type of analysis is required.
 """
 
+import re
 from typing import Dict
 
 
@@ -17,11 +18,18 @@ class QueryClassifier:
         ]
         
         # Temporal keywords
+        # NOTE: Years are NOT listed here — they are detected dynamically by
+        # _has_temporal_match() using a regex so that 2025, 2026, etc. work
+        # automatically without requiring a code change each year.
         self.temporal_keywords = [
             'march', 'april', 'may', 'june', 'july', 'august', 'september',
             'october', 'november', 'december', 'january', 'february',
-            '2020', '2021', '2022', '2023', '2024', 'year', 'month', 'recent', 'last'
+            'year', 'month', 'recent', 'last'
         ]
+
+        # Regex that matches any 4-digit year from 1900 to 2099 as a whole word.
+        # This catches all current and near-future years without any hardcoding.
+        self._year_re = re.compile(r'\b(19|20)\d{2}\b')
         
         # Spatial keywords  
         self.spatial_keywords = [
@@ -61,6 +69,9 @@ class QueryClassifier:
             # Count keyword matches
             argo_score = sum(1 for keyword in self.argo_keywords if keyword in query_lower)
             temporal_score = sum(1 for keyword in self.temporal_keywords if keyword in query_lower)
+            # Add 1 for any 4-digit year found (e.g. 2025, 2030) via regex
+            if self._year_re.search(query_lower):
+                temporal_score += 1
             spatial_score = sum(1 for keyword in self.spatial_keywords if keyword in query_lower)
             analytical_score = sum(1 for keyword in self.analytical_keywords if keyword in query_lower)
             viz_score = sum(1 for keyword in self.visualization_keywords if keyword in query_lower)
