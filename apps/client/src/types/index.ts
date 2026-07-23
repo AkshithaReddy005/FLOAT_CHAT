@@ -264,6 +264,7 @@ export interface ChatResponse {
   };
   context_count: number;
   response_summary?: string;
+  conversation_summary?: string;
 }
 
 export type UserType = 'admin' | 'researcher' | null;

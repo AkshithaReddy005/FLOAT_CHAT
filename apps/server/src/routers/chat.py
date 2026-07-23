@@ -30,6 +30,8 @@ class ChatResponse(BaseModel):
     pipeline_flow: Optional[dict] = None
     query_params: dict
     context_count: int
+    conversation_summary: Optional[str] = None
+
 
 class SessionResetRequest(BaseModel):
     session_id: Optional[str] = None

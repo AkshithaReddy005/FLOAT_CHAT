@@ -664,3 +664,46 @@ Remember: You're here to help users explore ocean data. Be informative, friendly
         response_parts.append("The interactive chart below will let you explore the data in detail. You can hover over points for specific values and zoom into areas of interest!")
         
         return " ".join(response_parts)
+
+    async def update_conversation_summary(self, previous_summary: str, user_query: str, ai_response: str) -> str:
+        """Dynamically update the conversation summary using Gemini"""
+        if not self.use_gemini:
+            # Fallback if Gemini is disabled
+            new_part = f"User asked: {user_query[:50]}. AI responded."
+            if previous_summary:
+                return f"{previous_summary} | {new_part}"[:300]
+            return new_part
+
+        prompt = f"""You are a helpful assistant summarizing a conversation between a researcher and an AI system analyzing ARGO oceanographic float data.
+
+Existing Conversation Summary:
+"{previous_summary or 'No previous context.'}"
+
+New Turn:
+User: "{user_query}"
+AI: "{ai_response}"
+
+Task: Update the conversation summary to incorporate the new turn.
+Keep it extremely concise (maximum 2-3 sentences). Focus on:
+1. Which floats or regions are being analyzed.
+2. What parameters (temperature, salinity, depth) have been discussed.
+3. Any active filters or comparison contexts established.
+
+Updated Summary:"""
+
+        try:
+            # Use import inside method to be extra safe
+            import google.generativeai as genai
+            response = self.model.generate_content(
+                prompt,
+                generation_config=genai.GenerationConfig(
+                    temperature=0.3,
+                    max_output_tokens=150
+                )
+            )
+            if response and hasattr(response, 'text') and response.text:
+                return response.text.strip()
+            return previous_summary or ""
+        except Exception as e:
+            print(f"Failed to update conversation summary: {e}")
+            return previous_summary or ""

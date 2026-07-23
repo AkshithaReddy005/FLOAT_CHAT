@@ -108,9 +108,14 @@ export class SessionContextManager {
     }
 
     // Update summary
-    context.summary = this.generateSummary(context.messages);
+    if (message.chatResponse?.conversation_summary) {
+      context.summary = message.chatResponse.conversation_summary;
+    } else {
+      context.summary = this.generateSummary(context.messages);
+    }
 
     this.saveContext(context);
+
   }
 
   private extractKeyContext(userMessage: string, keyContext: SessionContext['keyContext']): void {

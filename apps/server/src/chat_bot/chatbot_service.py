@@ -441,6 +441,16 @@ class ChatbotService:
             print(f"Failed to generate response summary: {e}")
             response_summary = "AI response generated"
 
+        # Step 9b: Generate/update cumulative conversation summary using Gemini
+        previous_summary = session_context.get('conversation_summary', '') if session_context else ''
+        try:
+            conversation_summary = await self.rag_engine.update_conversation_summary(
+                previous_summary, user_query, ai_response
+            )
+        except Exception as e:
+            print(f"Failed to update cumulative conversation summary: {e}")
+            conversation_summary = previous_summary
+
         # Calculate total processing time
         total_time = time.time() - start_time
         timing_data['total'] = total_time
@@ -477,8 +487,10 @@ class ChatbotService:
                 "processing_time": f"{timing_data['total']:.2f}s"
             },
             "context_count": len(context_results.get('documents', [[]])[0]) if context_results.get('documents') else 0,
-            "response_summary": response_summary
+            "response_summary": response_summary,
+            "conversation_summary": conversation_summary
         }
+
 
     async def create_fallback_response(self, user_query: str, db: Session) -> Dict:
         """Create a fallback response when the main pipeline fails"""
@@ -511,7 +523,8 @@ class ChatbotService:
                     "context_retrieved": 0,
                     "data_points": len(recent_data)
                 },
-                "context_count": 0
+                "context_count": 0,
+                "conversation_summary": None
             }
         except Exception as e:
             print(f"Even fallback response failed: {e}")
@@ -527,8 +540,10 @@ class ChatbotService:
                 "visualization": {"map": {"points": []}, "depth_profile": {"data": []}},
                 "query_params": {"classification": {"needs_data": False}, "sql_used": None, 
                                "context_retrieved": 0, "data_points": 0},
-                "context_count": 0
+                "context_count": 0,
+                "conversation_summary": None
             }
+
     
     def _execute_sql_query(self, db: Session, sql: str) -> List[Dict]:
         """Execute a validated SQL query and return results"""
