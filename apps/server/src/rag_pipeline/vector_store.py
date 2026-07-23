@@ -980,7 +980,7 @@ class VectorStore:
             # Strategy 1: Try with filters if provided
             if filters:
                 try:
-                    print(f"ChromaDB search with filters: {filters}")
+                    print(f"ChromaDB Metadata Pre-filtering applied: {filters}")
                     # PERFORMANCE OPTIMIZATION: Limit results aggressively for filtered queries
                     optimized_n_results = min(n_results, 20)  # Cap at 20 for filtered queries
                     

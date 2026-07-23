@@ -105,111 +105,132 @@ class ParameterContext:
         return filters
     
     def to_chroma_filters(self) -> Dict[str, Any]:
-        """Convert parameters to ChromaDB-compatible metadata filters"""
-        filters = {}
+        """Convert parameters to ChromaDB-compatible metadata filters dynamically.
         
-        # Location filters for ChromaDB metadata - Use $and to combine multiple conditions
-        if self.location_bounds:
-            filters['$and'] = [
-                {'latitude': {'$gte': self.location_bounds['lat_min']}},
-                {'latitude': {'$lte': self.location_bounds['lat_max']}},
-                {'longitude': {'$gte': self.location_bounds['lon_min']}},
-                {'longitude': {'$lte': self.location_bounds['lon_max']}}
-            ]
+        Builds a unified '$and' list of filters. Supports comparative regions 
+        using '$or' blocks, and translates year constraints into 'date' range queries.
+        """
+        filter_list = []
         
-        # Temporal filters - append to $and if exists
-        if self.date_years:
-            year_filter = {'year': {'$in': self.date_years}}
-            if '$and' in filters:
-                filters['$and'].append(year_filter)
-            else:
-                filters.update(year_filter)
-        elif self.date_range:
-            date_filter = {'date': {
-                '$gte': self.date_range[0].isoformat()[:10],
-                '$lte': self.date_range[1].isoformat()[:10]
-            }}
-            if '$and' in filters:
-                filters['$and'].append(date_filter)
-            else:
-                filters.update(date_filter)
-        
-        # Depth filters - append to $and if exists
-        if self.depth_range and self.depth_type != 'operator':
-            depth_filter = {'depth': {
-                '$gte': self.depth_range[0],
-                '$lte': self.depth_range[1]
-            }}
-            if '$and' in filters:
-                filters['$and'].append(depth_filter)
-            else:
-                filters.update(depth_filter)
-        elif self.depth_range and self.depth_type == 'operator':
-            operator, value = self.depth_range
-            if operator == '>=':
-                depth_filter = {'depth': {'$gte': value}}
-            elif operator == '<=':
-                depth_filter = {'depth': {'$lte': value}}
-            elif operator == '>':
-                depth_filter = {'depth': {'$gt': value}}
-            elif operator == '<':
-                depth_filter = {'depth': {'$lt': value}}
+        # 1. Location filters - check for comparative regions (e.g. "location1_vs_location2")
+        if self.location_name and "_vs_" in self.location_name:
+            locations = self.location_name.split("_vs_")
+            from .unified_query_parser import UnifiedQueryParser
             
-            if '$and' in filters:
-                filters['$and'].append(depth_filter)
+            try:
+                parser = UnifiedQueryParser()
+                bounds_dict = parser.location_bounds
+            except Exception:
+                bounds_dict = {}
+                
+            loc_filters = []
+            for loc in locations:
+                bounds = bounds_dict.get(loc.lower().strip())
+                if bounds:
+                    loc_filters.append({
+                        "$and": [
+                            {'latitude': {'$gte': float(bounds['lat_min'])}},
+                            {'latitude': {'$lte': float(bounds['lat_max'])}},
+                            {'longitude': {'$gte': float(bounds['lon_min'])}},
+                            {'longitude': {'$lte': float(bounds['lon_max'])}}
+                        ]
+                    })
+            if len(loc_filters) > 1:
+                filter_list.append({"$or": loc_filters})
+            elif len(loc_filters) == 1:
+                filter_list.extend(loc_filters[0]["$and"])
+                
+        # Single location bounds
+        elif self.location_bounds:
+            filter_list.append({
+                "$and": [
+                    {'latitude': {'$gte': float(self.location_bounds['lat_min'])}},
+                    {'latitude': {'$lte': float(self.location_bounds['lat_max'])}},
+                    {'longitude': {'$gte': float(self.location_bounds['lon_min'])}},
+                    {'longitude': {'$lte': float(self.location_bounds['lon_max'])}}
+                ]
+            })
+            
+        # 2. Temporal filters
+        if self.date_years:
+            year_filters = []
+            for year in self.date_years:
+                year_filters.append({
+                    '$and': [
+                        {'date': {'$gte': f"{year}-01-01"}},
+                        {'date': {'$lte': f"{year}-12-31"}}
+                    ]
+                })
+            if len(year_filters) > 1:
+                filter_list.append({'$or': year_filters})
             else:
-                filters.update(depth_filter)
-        
-        # Float ID filters - append to $and if exists
+                filter_list.extend(year_filters[0]['$and'])
+        elif self.date_range:
+            filter_list.append({
+                'date': {
+                    '$gte': self.date_range[0].isoformat()[:10],
+                    '$lte': self.date_range[1].isoformat()[:10]
+                }
+            })
+            
+        # 3. Depth filters
+        if self.depth_range:
+            if self.depth_type != 'operator':
+                filter_list.append({
+                    'depth': {
+                        '$gte': float(self.depth_range[0]),
+                        '$lte': float(self.depth_range[1])
+                    }
+                })
+            else:
+                operator, value = self.depth_range
+                op_mapping = {
+                    '>=': '$gte',
+                    '<=': '$lte',
+                    '>': '$gt',
+                    '<': '$lt'
+                }
+                chroma_op = op_mapping.get(operator)
+                if chroma_op:
+                    filter_list.append({'depth': {chroma_op: float(value)}})
+                    
+        # 4. Float ID filters
         if self.float_ids:
-            float_filter = {'float_id': {'$in': self.float_ids}}
-            if '$and' in filters:
-                filters['$and'].append(float_filter)
-            else:
-                filters.update(float_filter)
-
-        # Temperature threshold filters - FIXED: Add to ChromaDB filters
+            filter_list.append({'float_id': {'$in': [str(fid) for fid in self.float_ids]}})
+            
+        # 5. Temperature filters
         if self.temperature_range:
             operator, value = self.temperature_range
-            if operator == '<':
-                temp_filter = {'temperature': {'$lt': value}}
-            elif operator == '>':
-                temp_filter = {'temperature': {'$gt': value}}
-            elif operator == '<=':
-                temp_filter = {'temperature': {'$lte': value}}
-            elif operator == '>=':
-                temp_filter = {'temperature': {'$gte': value}}
-            else:
-                temp_filter = None
-
-            if temp_filter:
-                if '$and' in filters:
-                    filters['$and'].append(temp_filter)
-                else:
-                    filters.update(temp_filter)
-
-        # Salinity threshold filters - FIXED: Add to ChromaDB filters
+            op_mapping = {
+                '>=': '$gte',
+                '<=': '$lte',
+                '>': '$gt',
+                '<': '$lt'
+            }
+            chroma_op = op_mapping.get(operator)
+            if chroma_op:
+                filter_list.append({'temperature': {chroma_op: float(value)}})
+                
+        # 6. Salinity filters
         if self.salinity_range:
             operator, value = self.salinity_range
-            if operator == '<':
-                sal_filter = {'salinity': {'$lt': value}}
-            elif operator == '>':
-                sal_filter = {'salinity': {'$gt': value}}
-            elif operator == '<=':
-                sal_filter = {'salinity': {'$lte': value}}
-            elif operator == '>=':
-                sal_filter = {'salinity': {'$gte': value}}
-            else:
-                sal_filter = None
+            op_mapping = {
+                '>=': '$gte',
+                '<=': '$lte',
+                '>': '$gt',
+                '<': '$lt'
+            }
+            chroma_op = op_mapping.get(operator)
+            if chroma_op:
+                filter_list.append({'salinity': {chroma_op: float(value)}})
 
-            if sal_filter:
-                if '$and' in filters:
-                    filters['$and'].append(sal_filter)
-                else:
-                    filters.update(sal_filter)
+        # Compile final filters dictionary
+        if not filter_list:
+            return {}
+        if len(filter_list) == 1:
+            return filter_list[0]
+        return {"$and": filter_list}
 
-        return filters
-    
     def get_summary(self) -> str:
         """Get human-readable summary of parameters"""
         parts = []
