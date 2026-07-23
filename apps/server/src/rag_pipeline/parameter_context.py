@@ -166,22 +166,14 @@ class ParameterContext:
             else:
                 filter_list.extend(year_filters[0]['$and'])
         elif self.date_range:
-            filter_list.append({
-                'date': {
-                    '$gte': self.date_range[0].isoformat()[:10],
-                    '$lte': self.date_range[1].isoformat()[:10]
-                }
-            })
+            filter_list.append({'date': {'$gte': self.date_range[0].isoformat()[:10]}})
+            filter_list.append({'date': {'$lte': self.date_range[1].isoformat()[:10]}})
             
         # 3. Depth filters
         if self.depth_range:
             if self.depth_type != 'operator':
-                filter_list.append({
-                    'depth': {
-                        '$gte': float(self.depth_range[0]),
-                        '$lte': float(self.depth_range[1])
-                    }
-                })
+                filter_list.append({'depth': {'$gte': float(self.depth_range[0])}})
+                filter_list.append({'depth': {'$lte': float(self.depth_range[1])}})
             else:
                 operator, value = self.depth_range
                 op_mapping = {
@@ -193,6 +185,7 @@ class ParameterContext:
                 chroma_op = op_mapping.get(operator)
                 if chroma_op:
                     filter_list.append({'depth': {chroma_op: float(value)}})
+
                     
         # 4. Float ID filters
         if self.float_ids:
