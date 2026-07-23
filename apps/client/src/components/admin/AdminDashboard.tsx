@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Layout } from '../common/Layout';
 import { FileUpload } from './FileUpload';
 import { KnowledgeBaseDetails } from './KnowledgeBaseDetails';
@@ -24,6 +25,7 @@ interface DatabaseStats {
 }
 
 export const AdminDashboard = () => {
+  const navigate = useNavigate();
   const { status, uploadFile, uploadDetails, isUploading } = useUpload();
   const [stats, setStats] = useState<DatabaseStats | null>(null);
   const [isClearingDatabases, setIsClearingDatabases] = useState(false);
@@ -115,6 +117,14 @@ export const AdminDashboard = () => {
                 className="text-sm"
               >
                 Check Data Consistency
+              </Button>
+
+              <Button
+                onClick={() => navigate('/admin/testing')}
+                variant="secondary"
+                className="text-sm"
+              >
+                Evaluation Dashboard
               </Button>
 
               <Button

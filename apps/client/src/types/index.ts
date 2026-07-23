@@ -261,6 +261,16 @@ export interface ChatResponse {
     parameter?: string | null;
     float_id?: string | null;
     limit: number;
+    timings?: Record<string, string>;
+    classification?: {
+      intent?: string;
+      complexity?: string;
+      [key: string]: any;
+    };
+    sql_used?: string | null;
+    consistency_status?: string;
+    actual_data_count?: number;
+    data_points?: number;
   };
   context_count: number;
   response_summary?: string;

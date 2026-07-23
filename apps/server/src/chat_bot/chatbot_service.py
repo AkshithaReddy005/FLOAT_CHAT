@@ -484,8 +484,19 @@ class ChatbotService:
                     "limitation_reason": "Display optimization" if display_count < actual_count else None
                 },
                 "consistency_status": "passed" if validation_report["is_consistent"] else "failed",
-                "processing_time": f"{timing_data['total']:.2f}s"
+                "processing_time": f"{timing_data['total']:.2f}s",
+                "timings": {
+                    "Query Classifier": f"{timing_data.get('classification', 0.0)*1000:.1f}ms",
+                    "Parameter Extraction": f"{timing_data.get('parameter_extraction', 0.0)*1000:.1f}ms",
+                    "ChromaDB Context Retrieval": f"{timing_data.get('context_retrieval', 0.0)*1000:.1f}ms",
+                    "SQL Generation": f"{timing_data.get('sql_generation', 0.0)*1000:.1f}ms",
+                    "SQL Execution": f"{timing_data.get('sql_execution', 0.0)*1000:.1f}ms",
+                    "Consistency Validation": f"{timing_data.get('consistency_validation', 0.0)*1000:.1f}ms",
+                    "Gemini AI Generation": f"{timing_data.get('ai_generation', 0.0)*1000:.1f}ms",
+                    "Visualization Rendering": f"{timing_data.get('visualization', 0.0)*1000:.1f}ms"
+                }
             },
+
             "context_count": len(context_results.get('documents', [[]])[0]) if context_results.get('documents') else 0,
             "response_summary": response_summary,
             "conversation_summary": conversation_summary
