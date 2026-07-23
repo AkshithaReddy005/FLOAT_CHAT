@@ -9,6 +9,8 @@ import asyncio
 from typing import Dict, List, Optional
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
+from .unified_query_parser import UnifiedQueryParser
+
 
 # Try to import Google Generative AI
 try:
@@ -46,6 +48,15 @@ class SQLGenerator:
         else:
             self.use_gemini = False
             print("SQL Generator: Using rule-based approach only")
+
+        # Dynamically load global location bounds from UnifiedQueryParser
+        try:
+            self._parser = UnifiedQueryParser()
+            self.location_bounds = self._parser.location_bounds
+        except Exception as e:
+            print(f"Warning: Could not load global location bounds: {e}")
+            self.location_bounds = {}
+
 
     async def generate_sql(self, user_query: str, query_classification: Dict,
                           context_results: Dict = None, session_context: dict = None) -> Optional[str]:
@@ -396,18 +407,9 @@ Generate ONLY the SQL query (no explanation or markdown):"""
         return sql
     
     def _get_location_bounds_from_name(self, location_name: str) -> Optional[Dict]:
-        """Get location bounds from location name"""
-        location_bounds = {
-            "mumbai": {"lat_min": 18, "lat_max": 20, "lon_min": 72, "lon_max": 74},
-            "bombay": {"lat_min": 18, "lat_max": 20, "lon_min": 72, "lon_max": 74},
-            "arabian sea": {"lat_min": 10, "lat_max": 25, "lon_min": 65, "lon_max": 75},
-            "indian ocean": {"lat_min": -40, "lat_max": 30, "lon_min": 20, "lon_max": 120},
-            "northern arabian sea": {"lat_min": 20, "lat_max": 25, "lon_min": 65, "lon_max": 75},
-            "southern arabian sea": {"lat_min": 10, "lat_max": 20, "lon_min": 65, "lon_max": 75},
-            "coastal": {"lat_min": 18, "lat_max": 22, "lon_min": 70, "lon_max": 74},
-            "offshore": {"lat_min": 15, "lat_max": 25, "lon_min": 65, "lon_max": 72}
-        }
-        return location_bounds.get(location_name.lower().strip())
+        """Get location bounds from location name dynamically"""
+        return self.location_bounds.get(location_name.lower().strip())
+
     
     def _generate_rule_based(self, user_query: str, query_classification: Dict, session_context: dict = None) -> Optional[str]:
         """Generate SQL using rule-based approach"""
@@ -610,21 +612,13 @@ Generate ONLY the SQL query (no explanation or markdown):"""
         return params
     
     def _get_location_bounds(self, location: str) -> Optional[Dict]:
-        """Get geographic bounds for known locations"""
+        """Get geographic bounds for known locations dynamically"""
         location_lower = location.lower().strip()
-        
-        # Known locations
-        locations = {
-            "mumbai": {"lat_min": 18, "lat_max": 20, "lon_min": 72, "lon_max": 74},
-            "arabian sea": {"lat_min": 10, "lat_max": 25, "lon_min": 65, "lon_max": 75},
-            "indian ocean": {"lat_min": -40, "lat_max": 30, "lon_min": 20, "lon_max": 120}
-        }
-        
-        for loc_name, bounds in locations.items():
+        for loc_name, bounds in self.location_bounds.items():
             if loc_name in location_lower:
                 return bounds
-        
         return None
+
     
     def _is_comparative_query(self, query_lower: str) -> bool:
         """Check if query involves area/location comparison"""
@@ -682,31 +676,20 @@ Generate ONLY the SQL query (no explanation or markdown):"""
         return None
     
     def _extract_comparison_areas(self, query_lower: str) -> List[Dict]:
-        """Extract areas for comparison from query"""
+        """Extract areas for comparison from query dynamically"""
         areas = []
-        
-        # Default area definitions for common comparisons
-        known_areas = {
-            "mumbai": {"lat_min": 18, "lat_max": 20, "lon_min": 72, "lon_max": 74},
-            "arabian sea": {"lat_min": 15, "lat_max": 25, "lon_min": 65, "lon_max": 75},
-            "northern arabian sea": {"lat_min": 20, "lat_max": 25, "lon_min": 65, "lon_max": 75},
-            "southern arabian sea": {"lat_min": 10, "lat_max": 20, "lon_min": 65, "lon_max": 75},
-            "coastal": {"lat_min": 18, "lat_max": 22, "lon_min": 70, "lon_max": 74},
-            "offshore": {"lat_min": 15, "lat_max": 25, "lon_min": 65, "lon_max": 72}
-        }
-        
-        for area_name, bounds in known_areas.items():
+        for area_name, bounds in self.location_bounds.items():
             if area_name in query_lower:
                 areas.append(bounds)
         
         # If we don't have 2 areas, create default comparison
         if len(areas) < 2:
-            areas = [
-                {"lat_min": 18, "lat_max": 20, "lon_min": 72, "lon_max": 74},  # Mumbai area
-                {"lat_min": 15, "lat_max": 17, "lon_min": 68, "lon_max": 70}   # Southern area
-            ]
+            mumbai_bounds = self.location_bounds.get("mumbai", {"lat_min": 18, "lat_max": 20, "lon_min": 72, "lon_max": 74})
+            arabian_sea_bounds = self.location_bounds.get("arabian sea", {"lat_min": 10, "lat_max": 25, "lon_min": 65, "lon_max": 75})
+            areas = [mumbai_bounds, arabian_sea_bounds]
         
         return areas[:2]  # Return only first 2 areas
+
     
     def _build_analytical_select(self, query_lower: str, params: Dict) -> str:
         """Build sophisticated analytical SELECT clause"""
