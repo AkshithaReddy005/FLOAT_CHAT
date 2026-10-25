@@ -5,12 +5,13 @@ import { ErrorDisplay } from '../common/ErrorDisplay';
 
 interface FileUploadProps {
   onFileChange: (event: React.ChangeEvent<HTMLInputElement>) => void;
+  onMultipleFileChange?: (files: File[]) => void;
   status: string;
   uploadDetails?: UploadResponse | null;
   isUploading?: boolean;
 }
 
-export const FileUpload = ({ onFileChange, status, uploadDetails, isUploading }: FileUploadProps) => {
+export const FileUpload = ({ onFileChange, onMultipleFileChange, status, uploadDetails, isUploading }: FileUploadProps) => {
   const handleFileSelect = (file: File) => {
     const event = {
       target: { files: [file] }
@@ -46,8 +47,10 @@ export const FileUpload = ({ onFileChange, status, uploadDetails, isUploading }:
       </div>
       
       {!isUploading && (
-        <DragDropUpload
+      <DragDropUpload
           onFileSelect={handleFileSelect}
+          onMultipleFileSelect={onMultipleFileChange}
+          allowMultiple={true}
           disabled={isUploading}
           className="max-w-2xl mx-auto"
         />

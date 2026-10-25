@@ -162,7 +162,7 @@ export const DragDropUpload = ({
         {isDragOver && (
           <div className="absolute inset-0 bg-indigo-500/10 rounded-2xl flex items-center justify-center">
             <div className="bg-indigo-500 text-white px-4 py-2 rounded-xl font-semibold shadow-lg animate-pulse">
-              Drop your NetCDF file here!
+              Drop your NetCDF files here!
             </div>
           </div>
         )}
@@ -185,13 +185,14 @@ export const DragDropUpload = ({
               Upload ARGO NetCDF Files
             </h3>
             <p className="text-slate-600 text-sm leading-relaxed">
-              Drag and drop your file here, or <span className="text-indigo-600 font-semibold">click to browse</span>
+              Drag and drop <strong>one or multiple</strong> files here, or <span className="text-indigo-600 font-semibold">click to browse</span>
             </p>
           </div>
           
           <div className="flex flex-wrap justify-center gap-2 text-xs text-slate-500">
             <span className="bg-slate-100 px-3 py-1 rounded-full">NetCDF (.nc)</span>
-            <span className="bg-slate-100 px-3 py-1 rounded-full">Max 50MB</span>
+            <span className="bg-slate-100 px-3 py-1 rounded-full">Max 50MB each</span>
+            <span className="bg-indigo-100 text-indigo-700 font-semibold px-3 py-1 rounded-full">✓ Multiple Files</span>
             <span className="bg-slate-100 px-3 py-1 rounded-full">ARGO Format</span>
           </div>
           

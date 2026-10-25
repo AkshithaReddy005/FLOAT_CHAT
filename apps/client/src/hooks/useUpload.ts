@@ -36,10 +36,58 @@ export const useUpload = () => {
     }
   };
 
+  const uploadMultipleFiles = async (files: File[]): Promise<void> => {
+    setIsUploading(true);
+    setStatus(`Uploading ${files.length} files...`);
+    setUploadDetails(null);
+
+    let totalAdded = 0;
+    let totalDuplicates = 0;
+    let totalFailed = 0;
+    const fileResults: string[] = [];
+
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      setStatus(`Processing file ${i + 1} of ${files.length}: ${file.name}...`);
+      try {
+        const response = await apiService.uploadFile(file);
+        const added = response.measurements_count ?? 0;
+        const dupes = response.duplicate_measurements ?? 0;
+        totalAdded += added;
+        totalDuplicates += dupes;
+        if (response.status === 'duplicate_file') {
+          fileResults.push(`${file.name}: duplicate file skipped`);
+        } else {
+          fileResults.push(`${file.name}: +${added} new, ${dupes} duplicates skipped`);
+        }
+      } catch (err) {
+        totalFailed++;
+        fileResults.push(`${file.name}: FAILED`);
+        console.error(`Failed to upload ${file.name}:`, err);
+      }
+    }
+
+    const successCount = files.length - totalFailed;
+    setStatus(
+      `Batch upload complete! ${successCount}/${files.length} files processed. ` +
+      `${totalAdded} new measurements added, ${totalDuplicates} duplicates skipped.` +
+      (totalFailed > 0 ? ` ${totalFailed} file(s) failed.` : '')
+    );
+    setUploadDetails({
+      measurements_count: totalAdded,
+      duplicate_measurements: totalDuplicates,
+      total_in_file: totalAdded + totalDuplicates,
+      status: totalFailed === 0 ? 'success' : 'partial_success',
+      message: fileResults.join('\n'),
+    } as UploadResponse);
+    setIsUploading(false);
+  };
+
   return {
     status,
     isUploading,
     uploadFile,
+    uploadMultipleFiles,
     uploadDetails,
   };
 };

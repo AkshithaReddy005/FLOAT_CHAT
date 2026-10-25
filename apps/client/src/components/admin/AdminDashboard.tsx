@@ -26,7 +26,7 @@ interface DatabaseStats {
 
 export const AdminDashboard = () => {
   const navigate = useNavigate();
-  const { status, uploadFile, uploadDetails, isUploading } = useUpload();
+  const { status, uploadFile, uploadMultipleFiles, uploadDetails, isUploading } = useUpload();
   const [stats, setStats] = useState<DatabaseStats | null>(null);
   const [isClearingDatabases, setIsClearingDatabases] = useState(false);
   const [clearStatus, setClearStatus] = useState<string>('');
@@ -37,9 +37,20 @@ export const AdminDashboard = () => {
   const [showDataConsistencyChecker, setShowDataConsistencyChecker] = useState(false);
 
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (file) {
-      uploadFile(file);
+    const files = event.target.files;
+    if (!files || files.length === 0) return;
+    if (files.length === 1) {
+      uploadFile(files[0]);
+    } else {
+      uploadMultipleFiles(Array.from(files));
+    }
+  };
+
+  const handleMultipleFileChange = (files: File[]) => {
+    if (files.length === 1) {
+      uploadFile(files[0]);
+    } else {
+      uploadMultipleFiles(files);
     }
   };
 
@@ -258,6 +269,7 @@ export const AdminDashboard = () => {
 
           <FileUpload
             onFileChange={handleFileChange}
+            onMultipleFileChange={handleMultipleFileChange}
             status={status}
             uploadDetails={uploadDetails}
             isUploading={isUploading}

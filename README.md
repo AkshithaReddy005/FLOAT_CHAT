@@ -1,444 +1,246 @@
-# FloatChat - Advanced ARGO Oceanographic Data Analysis System
+# FloatChat — Advanced ARGO Oceanographic Intelligence System
 
-FloatChat is a sophisticated web application that combines AI tech with oceanographic data analysis to provide researchers, scientists, and marine professionals with powerful tools for analyzing ARGO float data. The system features an intelligent RAG (Retrieval-Augmented Generation) pipeline, advanced visualization capabilities, and natural language querying.
-
-## **System Overview**
-
-FloatChat transforms complex oceanographic data analysis through:
-- **AI-Powered Natural Language Queries**: Ask questions in plain English about oceanographic data
-- **Intelligent Visualization Selection**: Automated chart recommendation based on data patterns and query intent
-- **Advanced RAG Pipeline**: Context-aware responses using vector embeddings and LLM integration
-- **Professional Data Management**: Enterprise-grade data processing and storage capabilities
-- **Interactive Visualizations**: Dynamic charts, maps, and depth profiles with intelligent hover interactions
+FloatChat is an end-to-end oceanographic intelligence and conversational analytics platform designed for researchers, marine scientists, and oceanographers. It enables natural language exploration of autonomous ARGO profiling float datasets by unifying high-dimensional scientific data ingestion (NetCDF), dual-tier synchronized storage (PostgreSQL + ChromaDB), a self-healing Hybrid RAG engine (NL-to-SQL + Vector Search), and interactive geospatial/oceanographic visualizations.
 
 ---
 
-## **Comprehensive Feature Documentation**
+## Architecture Overview
 
-### **AI & Machine Learning Core**
+FloatChat utilizes a multi-tiered architecture that bridges unstructured semantic search and strict scientific tabular querying:
 
-#### **Advanced RAG (Retrieval-Augmented Generation) System**
-- **Multi-Modal RAG Pipeline**: Combines vector search, SQL generation, and LLM responses
-- **Gemini AI Integration**: Uses Google's Gemini 2.0 Flash for intelligent query processing
-- **Context-Aware Responses**: Maintains conversation history and session context
-- **Semantic Search**: ChromaDB-powered vector embeddings for intelligent data retrieval
-- **Query Classification Engine**: Automatically categorizes queries by complexity, intent, and data requirements
-
-#### **Intelligent Query Processing**
-- **Natural Language to SQL**: Converts complex English queries to optimized SQL
-- **Smart Query Classification**: Identifies temporal, spatial, analytical, and visualization intent
-- **Chart Request Detection**: Automatically recognizes when users want specific visualizations
-- **Context Preservation**: Maintains conversation flow and user preferences across sessions
-- **Fallback Mechanisms**: Graceful degradation when AI services are unavailable
-
-#### **Advanced Scoring & Selection Algorithms**
-- **Visualization Relevance Scoring**: Multi-factor algorithm (0.0-2.0+ scale) for chart selection
-  - Data quality assessment
-  - Query intent matching
-  - Geographic/temporal pattern recognition
-  - Context relevance calculations
-- **Dynamic Chart Prioritization**: Automatically selects primary and secondary visualizations
-- **Data Quality Scoring**: Comprehensive assessment of data completeness and reliability
-
-#### **Smart Example Generation**
-- **Dynamic Query Suggestions**: AI-generated examples based on actual data availability
-- **Context-Aware Examples**: Adapts suggestions to current data patterns and user interests
-- **Multi-Complexity Examples**: Simple, analytical, temporal, and spatial query categories
-
-### **Advanced Data Processing & Management**
-
-#### **Robust NetCDF Processing**
-- **Multi-Format Support**: Handles various ARGO NetCDF file structures and formats
-- **Intelligent Variable Detection**: Automatically maps different naming conventions
-- **XArray Integration**: Advanced scientific data processing with pandas and numpy
-- **Data Validation**: Comprehensive quality checks and error handling
-- **Measurement Extraction**: Processes temperature, salinity, pressure, and geospatial data
-
-#### **Enterprise-Grade Database Management**
-- **PostgreSQL Backend**: Optimized for large-scale oceanographic datasets
-- **Advanced Indexing**: Multi-column indexes for fast spatial and temporal queries
-- **Duplicate Prevention**: SHA-256 hashing with multiple validation layers
-- **Batch Processing**: Efficient bulk data operations with transaction management
-- **Data Integrity**: Unique constraints and referential integrity enforcement
-
-#### **Comprehensive Duplicate Detection**
-- **Multi-Level Validation**: File-level, measurement-level, and batch-level duplicate detection
-- **SHA-256 Fingerprinting**: Cryptographic hashing for reliable duplicate identification
-- **Intelligent Deduplication**: Preserves data quality while preventing storage bloat
-- **Real-Time Monitoring**: Live duplicate detection during file uploads
-
-#### **Advanced Vector Store (ChromaDB)**
-- **Semantic Embeddings**: Rich contextual representations of oceanographic measurements
-- **Oceanographic Feature Detection**: Recognizes upwelling zones, thermoclines, water masses
-- **Analytics-Enhanced Embeddings**: Temperature ranges, salinity patterns, depth categories
-- **Persistent Storage**: Maintains embeddings across application restarts
-- **Batch Operations**: Efficient vector operations for large datasets
-
-### **Sophisticated Visualization Engine**
-
-#### **Intelligent Chart Selection System**
-- **Multi-Factor Scoring Algorithm**: Considers data patterns, query intent, and visualization effectiveness
-- **Dynamic Chart Types**:
-  - **Interactive Ocean Maps**: Leaflet-based with depth-coded markers and geographic clustering
-  - **Advanced Depth Profiles**: Dual-axis temperature/salinity plots with professional styling
-  - **Custom Chart Generation**: AI-powered Plotly chart creation based on user requests
-  - **Statistical Dashboards**: Automated summary statistics and data distributions
-
-#### **Smart Visualization Features**
-- **Collapsible Interface**: Clean UX with data-driven expand/collapse behavior
-- **Professional Hover Interactions**: Rich tooltips with formatted data display
-- **Responsive Design**: Adaptive layouts for different screen sizes and data volumes
-- **Export Capabilities**: High-resolution PNG export with customizable dimensions
-- **Real-Time Updates**: Dynamic chart updates based on query refinements
-
-#### **Advanced Chart Request Processing**
-- **AI-Powered Chart Generation**: Gemini integration for complex chart creation
-- **Natural Language Chart Requests**: "Show me temperature vs depth" → Custom Plotly visualization
-- **Intelligent Parameter Mapping**: Automatic axis selection and data transformation
-- **Chart Type Recognition**: Identifies scatter, line, histogram, bar, and time series requests
-- **Fallback Processing**: Rule-based chart generation when AI is unavailable
-
-### **Professional Frontend Architecture**
-
-#### **Modern React Application**
-- **TypeScript Implementation**: Type-safe development with comprehensive interfaces
-- **Component-Based Architecture**: Modular, reusable UI components
-- **State Management**: Efficient data flow and application state handling
-- **Error Boundaries**: Graceful error handling and user feedback
-
-#### **Advanced UI Components**
-- **Real-Time Chat Interface**: WebSocket-style conversation flow with typing indicators
-- **Professional Admin Dashboard**: Comprehensive system management and monitoring
-- **Researcher Tools**: Specialized interfaces for data exploration and analysis
-- **File Upload System**: Drag-and-drop NetCDF file handling with progress tracking
-- **Interactive Data Grids**: Sortable, filterable data tables with pagination
-
-#### **User Experience Features**
-- **Session Context Management**: Maintains conversation state and user preferences
-- **Loading States**: Sophisticated loading indicators and skeleton screens
-- **Error Handling**: User-friendly error messages with actionable suggestions
-- **Responsive Design**: Mobile-optimized layouts and touch-friendly interactions
-- **Accessibility**: ARIA labels, keyboard navigation, and screen reader support
-
-### **Backend API Architecture**
-
-#### **FastAPI RESTful Services**
-- **Comprehensive API Endpoints**: 15+ specialized endpoints for different functionalities
-- **Automatic Documentation**: Interactive Swagger/OpenAPI documentation
-- **CORS Configuration**: Secure cross-origin resource sharing
-- **Request Validation**: Pydantic models for data validation and serialization
-- **Error Handling**: Comprehensive HTTP status codes and error messages
-
-#### **Key API Endpoints**
-- **Chat Interface**: `/chat` - Natural language query processing
-- **File Management**: `/admin/upload`, `/admin/upload-multiple` - NetCDF file processing
-- **Data Retrieval**: `/researcher/query` - Direct data access and filtering
-- **System Health**: `/health`, `/admin/stats` - System monitoring and diagnostics
-- **Knowledge Base**: `/admin/knowledge-base` - Vector store analytics and insights
-- **Database Management**: Multiple endpoints for data management and cleanup
-
-#### **Advanced Security & Validation**
-- **SQL Injection Prevention**: Parameterized queries and input sanitization
-- **File Validation**: Comprehensive NetCDF format verification
-- **Rate Limiting**: Protection against abuse and resource exhaustion
-- **Input Sanitization**: Multi-layer validation for all user inputs
-- **Error Logging**: Comprehensive logging for debugging and monitoring
-
-### **Analytics & Monitoring Features**
-
-#### **System Health Monitoring**
-- **Real-Time Statistics**: Live metrics on data volume, storage usage, and system performance
-- **Database Analytics**: Detailed insights into data distribution and quality
-- **Vector Store Metrics**: ChromaDB collection statistics and embedding quality
-- **Performance Monitoring**: Query response times and system resource usage
-
-#### **Knowledge Base Analytics**
-- **Data Distribution Analysis**: Geographic, temporal, and parameter coverage insights
-- **RAG System Insights**: Vector similarity analysis and retrieval quality metrics
-- **Query Pattern Analysis**: Understanding user behavior and common query types
-- **Balance Testing**: Automated testing of data representativeness and coverage
-
-#### **Administrative Tools**
-- **Bulk Operations**: Multi-file upload and batch processing capabilities
-- **Data Cleanup**: Automated and manual data purging options
-- **System Reinitialization**: Complete system reset and reconfiguration
-- **File Management**: Detailed tracking of uploaded files and processing status
-
-### **Data Quality & Reliability**
-
-#### **Comprehensive Data Validation**
-- **Multi-Level Quality Checks**: File, measurement, and batch-level validation
-- **Oceanographic Range Validation**: Realistic value ranges for temperature, salinity, pressure
-- **Geographic Validation**: Coordinate system verification and bounds checking
-- **Temporal Validation**: Date format standardization and chronological ordering
-
-#### **Advanced Error Handling**
-- **Graceful Degradation**: System continues operation during partial failures
-- **User-Friendly Error Messages**: Clear explanations with actionable solutions
-- **Automatic Recovery**: Self-healing mechanisms for common issues
-- **Comprehensive Logging**: Detailed error tracking for debugging and improvement
-
-### **Performance Optimizations**
-
-#### **Database Performance**
-- **Strategic Indexing**: Optimized for common query patterns (spatial, temporal, float-based)
-- **Query Optimization**: Efficient SQL generation with proper JOIN strategies
-- **Connection Pooling**: Managed database connections for high concurrency
-- **Bulk Operations**: Batch processing for large data uploads
-
-#### **Frontend Performance**
-- **Code Splitting**: Lazy loading of components and modules
-- **Memoization**: React optimization for expensive computations
-- **Virtual Scrolling**: Efficient rendering of large data sets
-- **Progressive Loading**: Staged data loading for better user experience
+```
+┌────────────────────────────────────────────────────────────────────────┐
+│                        React Frontend (Port 3000)                      │
+│   ┌──────────────┐  ┌──────────────┐  ┌─────────────┐  ┌────────────┐  │
+│   │   Chat UI    │  │   Admin DB   │  │ Researcher  │  │ Testing    │  │
+│   │ & Visualizer │  │  Dashboard   │  │  Analytics  │  │ Dashboard  │  │
+│   └──────┬───────┘  └──────┬───────┘  └──────┬──────┘  └─────┬──────┘  │
+└──────────┼─────────────────┼─────────────────┼───────────────┼─────────┘
+           │                 │                 │               │
+           ▼                 ▼                 ▼               ▼
+┌────────────────────────────────────────────────────────────────────────┐
+│                      FastAPI Backend (Port 8000)                       │
+│   ┌──────────────┐  ┌──────────────┐  ┌─────────────┐  ┌────────────┐  │
+│   │   chat.py    │  │   admin.py   │  │researcher.py│  │ system.py  │  │
+│   └──────┬───────┘  └──────┬───────┘  └──────┬──────┘  └─────┬──────┘  │
+│          └─────────────────┴────────┬────────┴───────────────┘         │
+│                                     ▼                                  │
+│                       routers/deps.py (Singletons)                     │
+│          ┌──────────────────────────┼────────────────────────┐         │
+│          ▼                          ▼                        ▼         │
+│   ChatbotService         TwoPhaseCoordinator          VectorStore     │
+│   (NL-to-SQL + RAG)    (PostgreSQL + ChromaDB Sync)   (ChromaDB Index) │
+└──────────┬──────────────────────────┬────────────────────────┬─────────┘
+           │                          │                        │
+           ▼                          ▼                        ▼
+    ┌──────────────┐           ┌──────────────┐         ┌──────────────┐
+    │  PostgreSQL  │           │   ChromaDB   │         │  Google LLM  │
+    │  (Relational │           │ (Embeddings  │         │  Gemini 2.0  │
+    │ Raw Metrics) │           │ all-mpnet-v2)│         │    Flash     │
+    └──────────────┘           └──────────────┘         └──────────────┘
+```
 
 ---
 
-## **Use Cases & Applications**
+## Key Capabilities & Core Pipeline
 
-### **Research Applications**
-- **Climate Studies**: Long-term temperature and salinity trend analysis
-- **Oceanographic Research**: Water mass identification and tracking
-- **Marine Biology**: Habitat characterization and species distribution modeling
-- **Coastal Management**: Near-shore environmental monitoring
+### 1. High-Fidelity NetCDF Ingestion
+- **Real WMO Float IDs**: Direct parsing of `PLATFORM_NUMBER` character arrays to prevent cross-profile contamination across floats.
+- **TEOS-10 Pressure-to-Depth Conversion**: Converts sea pressure ($p$ in dbar) to true ocean depth ($z$ in meters) using `gsw.z_from_p(pressure, latitude)`.
+- **Cryptographic Deduplication**: Computes SHA-256 file fingerprints and MD5 record keys (`MD5(float_id + lat + lon + date + depth)`) to prevent duplicate storage.
+- **Multi-File Batch Upload**: Seamless concurrent or sequential drag-and-drop batch upload in the admin portal.
 
-### **Educational Use**
-- **Oceanography Courses**: Interactive data exploration and visualization
-- **Data Science Training**: Real-world datasets for machine learning applications
-- **Research Methods**: Teaching modern data analysis techniques
+### 2. Two-Phase Coordinated Transaction System
+- Guarantees transactional integrity across relational and vector stores.
+- **Phase 1 (PostgreSQL)**: Bulk chunked ingestion (100 measurements/chunk) with automatic fallback to single-row isolation on constraints.
+- **Phase 2 (ChromaDB)**: Syncs corresponding document embeddings into vector collections only after relational commits succeed.
 
-### **Professional Applications**
-- **Environmental Consulting**: Marine impact assessments and monitoring
-- **Government Agencies**: Policy-making support and regulatory compliance
-- **Maritime Operations**: Route planning and environmental awareness
+### 3. Hybrid RAG & Self-Healing NL-to-SQL
+- **Query Classification & Unified Parameter Extraction**: Parses natural language into structured constraints across 7 primary dimensions:
+  - Coordinate bounding boxes (50+ global oceans, seas, and gulfs)
+  - Depth ranges (meters)
+  - Pressure ranges (dbar)
+  - Temperature ranges (°C)
+  - Salinity ranges (PSU)
+  - Temporal patterns (regex-driven 1900–2099 calendar year recognition)
+  - Platform/Float identifiers (WMO IDs)
+- **Metadata Pre-filtered Vector Search**: Restricts semantic search spaces in ChromaDB using extracted structured parameters prior to cosine distance ranking.
+- **Self-Healing SQL**: Validates executed SQL query outputs against requested user constraints (e.g., verifying sample boundaries). Automatically patches missing `WHERE` clauses and re-executes if anomalies are detected.
+- **Session Memory Management**: Sliding window capped at 5 recent exchange pairs with automatic background LLM summarization.
 
----
+### 4. Interactive Oceanographic Visualizations
+- **Interactive Geospatial Maps**: Leaflet-based trajectory and profile maps with depth-coded color scales and marker clustering.
+- **Dual-Axis Depth Profiles**: Salinity (PSU) and Temperature (°C) plotted against depth (m).
+- **Automated Plotly Generation**: Fallback and rule-driven generation of time series, anomaly distributions, histograms, and scatter plots.
 
-## **Technical Specifications**
-
-### **Architecture Stack**
-- **Backend**: Python 3.8+, FastAPI, SQLAlchemy, PostgreSQL
-- **AI/ML**: Google Gemini API, ChromaDB, NumPy, Pandas, XArray
-- **Frontend**: React 18+, TypeScript, Tailwind CSS, Vite
-- **Visualization**: Plotly.js, Leaflet, D3.js components
-- **Data Processing**: NetCDF4, Scientific Python ecosystem
-
-### **Performance Characteristics**
-- **Data Capacity**: Handles millions of measurements efficiently
-- **Query Response**: Sub-second response times for most queries
-- **Concurrent Users**: Designed for multi-user research environments
-- **Storage Efficiency**: Optimized data structures and compression
-
-### **Scalability Features**
-- **Horizontal Scaling**: Database and API tier scaling capabilities
-- **Microservice Ready**: Modular architecture for cloud deployment
-- **Container Support**: Docker-ready for modern deployment workflows
-- **Cloud Compatible**: AWS, Azure, GCP deployment patterns
+### 5. Developer Testing & Benchmark Dashboard
+- Comprehensive evaluation suite accessible at `/admin/testing`.
+- Measures step-by-step latency across: classification, parameter extraction, ChromaDB retrieval, SQL generation, SQL execution, consistency validation, and LLM synthesis.
+- Benchmarking history with run-to-run regression tracking saved in browser `localStorage`.
 
 ---
 
-## Quick Start
+## Tech Stack
 
-Want to get up and running quickly? Follow these steps:
+| Component | Technology | Description |
+|---|---|---|
+| **Frontend** | React 19, TypeScript, Vite, Tailwind CSS | High-performance responsive single-page web client |
+| **Mapping & Charts** | Leaflet, React-Leaflet, Plotly.js | Interactive oceanographic maps and profile charts |
+| **Backend API** | FastAPI, Uvicorn, Pydantic | Asynchronous RESTful API with modular routing |
+| **Relational DB** | PostgreSQL, SQLAlchemy, psycopg2 | Primary source of truth for tabular measurements |
+| **Vector DB** | ChromaDB (`all-mpnet-base-v2`) | Semantic embeddings (768-dimensional dense vectors) |
+| **Oceanographic Math** | `gsw` (TEOS-10), `netCDF4`, `xarray` | Standard thermodynamic equation of seawater & grid processing |
+| **Language Model** | Google Gemini 2.0 Flash | Semantic query parsing, NL-to-SQL, and synthesis |
 
-1. **Check Prerequisites**: `python scripts/check_setup.py`
-2. **Setup Environment**: Copy `.env.example` files and configure
-3. **Install Dependencies**: Install Python packages and Node.js modules
-4. **Setup Database**: Run the database setup script
-5. **Start Servers**: Launch both backend and frontend
+---
 
-Detailed instructions below:
+## Directory Structure
 
+```
+floatchat/
+├── apps/
+│   ├── client/                      # React + TypeScript Frontend
+│   │   ├── src/
+│   │   │   ├── components/
+│   │   │   │   ├── admin/           # Admin & Developer Testing dashboards
+│   │   │   │   ├── chat/            # Chat interface & query suggestions
+│   │   │   │   ├── visualizations/  # Leaflet maps, depth profiles & charts
+│   │   │   │   └── common/          # Drag-and-drop file uploaders
+│   │   │   ├── hooks/               # Custom React hooks (useUpload, useChat)
+│   │   │   └── services/            # Axios API client integrations
+│   │   └── package.json
+│   │
+│   └── server/                      # FastAPI Backend
+│       ├── src/
+│       │   ├── chat_bot/            # End-to-end chat orchestration
+│       │   ├── database/            # SQLAlchemy models, Two-Phase Coordinator
+│       │   ├── rag_pipeline/        # RAG Engine, VectorStore, SQL Generator,
+│       │   │                        # Query Classifier, Consistency Validator
+│       │   ├── routers/             # admin.py, chat.py, researcher.py, system.py
+│       │   ├── utils/               # NetCDF parser, query examples generator
+│       │   └── main.py              # Application entrypoint & CORS config
+│       ├── requirements.txt
+│       └── setup_db.py              # Database initialization script
+│
+├── rebuild_vector_store.py          # Standalone PostgreSQL → ChromaDB sync script
+├── PROJECT_DOCUMENTATION.md         # In-depth architectural & implementation reference
+└── README.md
+```
+
+---
 
 ## Prerequisites
 
-Before setting up the project, ensure you have the following installed:
+Before starting, ensure you have the following installed:
+- **Node.js** (v18.x or v20.x+) and `npm`
+- **Python** (v3.10, v3.11, or v3.12)
+- **PostgreSQL** (v14+ recommended)
+- **Google Gemini API Key** ([Google AI Studio](https://aistudio.google.com/))
 
-- **Node.js** (v18 or higher) - [Download here](https://nodejs.org/)
-- **Python** (v3.8 or higher) - [Download here](https://python.org/)
-- **PostgreSQL** (v12 or higher) - [Download here](https://postgresql.org/download/)
+---
 
-## Setup Instructions
+## Setup & Installation
 
-### 1. Clone the Repository
-
+### 1. Clone Repository
 ```bash
-git clone <repository-url>
+git clone https://github.com/your-username/floatchat.git
 cd floatchat
 ```
 
-### 2. Set Up Environment Variables
+### 2. Configure Environment Variables
 
-#### Server Environment Variables
-```bash
-# Navigate to server directory
-cd apps/server
+#### Backend (`apps/server/.env`)
+Create `apps/server/.env` based on `apps/server/.env.example`:
+```ini
+# Database Configuration
+DB_HOST=localhost
+DB_PORT=5432
+DB_NAME=floatchat
+DB_USER=postgres
+DB_PASSWORD=your_postgres_password
 
-# Copy the environment template
-cp .env.example .env
+# Server Host/Port
+BACKEND_HOST=127.0.0.1
+BACKEND_PORT=8000
+FRONTEND_HOST=localhost
+FRONTEND_PORT=3000
 
-# Edit the .env file with your PostgreSQL credentials
-# Update the following variables:
-# DB_PASSWORD=your_actual_postgresql_password
-# DB_USER=your_postgresql_username (default: postgres)
+# AI Configuration
+GEMINI_API_KEY=your_gemini_api_key_here
+GEMINI_MODEL=gemini-2.0-flash
+
+# ChromaDB Embedding Model
+CHROMA_EMBEDDING_MODEL=all-mpnet-base-v2
 ```
 
-#### Client Environment Variables
-```bash
-# Navigate to client directory
-cd ../client
-
-# Copy the environment template
-cp .env.example .env
-
-# The default values should work for local development
+#### Frontend (`apps/client/.env`)
+Create `apps/client/.env`:
+```ini
+VITE_API_BASE_URL=http://localhost:8000
 ```
 
-### 3. Set Up PostgreSQL Database
-
-1. **Install PostgreSQL** if you haven't already
-2. **Start PostgreSQL service**
-   - Windows: PostgreSQL should start automatically after installation
-   - macOS: `brew services start postgresql`
-   - Linux: `sudo systemctl start postgresql`
-
-3. **Create a PostgreSQL user** (if needed):
-   ```sql
-   -- Connect to PostgreSQL as superuser
-   psql -U postgres
-   
-   -- Create a new user (optional, you can use 'postgres' user)
-   CREATE USER your_username WITH PASSWORD 'your_password';
-   ALTER USER your_username CREATEDB;
-   ```
-
-### 4. Set Up the Backend (Server)
-
+### 3. Setup PostgreSQL Database
+Make sure PostgreSQL is running on your machine, then initialize the tables:
 ```bash
-# Navigate to server directory
 cd apps/server
-
-# Create a virtual environment
 python -m venv venv
 
-# Activate the virtual environment
-# Windows:
+# Windows
 venv\Scripts\activate
-# macOS/Linux:
+# macOS/Linux
 source venv/bin/activate
 
-# Install Python dependencies
 pip install -r requirements.txt
-
-# Set up the database (this will create the database and tables)
 python setup_db.py
+```
 
-# Start the FastAPI server
+### 4. Run the Backend Server
+```bash
+# Inside apps/server with venv activated
 python src/main.py
 ```
+*API will run at `http://localhost:8000` with interactive Swagger docs at `http://localhost:8000/docs`.*
 
-The server will start at `http://localhost:8000`
-
-### 5. Set Up the Frontend (Client)
-
+### 5. Run the Frontend Client
+Open a separate terminal:
 ```bash
-# Open a new terminal and navigate to client directory
 cd apps/client
-
-# Install Node.js dependencies
 npm install
-
-# Start the development server
 npm run dev
 ```
+*Client application will be accessible at `http://localhost:3000`.*
 
-The client will start at `http://localhost:3000`
+---
 
-## Verification
+## Database Resynchronization Utility
 
-### Check if everything is working:
-
-Run the setup verification script:
+If you load raw data directly into PostgreSQL or want to rebuild your vector store from scratch:
 ```bash
-python scripts/check_setup.py
+# Inside project root with backend venv activated
+python rebuild_vector_store.py
 ```
+This utility:
+1. Re-initializes the `argo_data_enhanced` collection in ChromaDB.
+2. Performs a primary-key indexed query against PostgreSQL.
+3. Batches records into scientific document strings and regenerates `all-mpnet-base-v2` dense embeddings.
+4. Executes validation checks across major ocean regions.
 
-This will check:
-- Python and Node.js versions
-- Required Python packages
-- PostgreSQL availability
-- Environment file configuration
+---
 
-### Manual Verification:
+## Architectural Evolution (Interview Commit Summary)
 
-1. **Database**: Run `python setup_db.py` in the server directory - you should see:
-   ```
-   === FloatChat Database Setup ===
-   Connecting to PostgreSQL at localhost:5432 as user 'postgres'
-   Target database: floatchat
-   ✅ Connected to PostgreSQL: PostgreSQL 14.x...
-   Database 'floatchat' already exists.
-   Creating tables and indexes...
-   Tables created successfully!
-   ✅ Database setup completed successfully!
-   ```
+| Commit Group | Key Highlights | Core Impact |
+|---|---|---|
+| **Data Quality** | Real WMO Float IDs via NetCDF char arrays & TEOS-10 `gsw` depth conversion | Prevents profile mixing and replaces unscientific `depth = pressure` assumptions |
+| **Reliability & Performance** | Self-Healing SQL query patching & removal of artificial delays | Eliminates query latency bloat and guarantees filter enforcement |
+| **Retrieval & Memory** | ChromaDB upgrade to `all-mpnet-base-v2`, dynamic regex years, session history capping | Dramatically improves semantic oceanographic retrieval and controls token costs |
+| **Query Intelligence** | 50+ global ocean bounding boxes & metadata pre-filtering | Filters vector search space before similarity ranking for higher speed and precision |
+| **Architecture** | Modular FastAPI routers (`admin`, `chat`, `researcher`, `system`) with shared singletons | Eliminates monolithic dependencies and enables isolated testing |
 
-2. **Backend**: Visit `http://localhost:8000/docs` to see the FastAPI documentation
+*For complete implementation specs, code flows, and parameter mappings, see [PROJECT_DOCUMENTATION.md](file:///PROJECT_DOCUMENTATION.md).*
 
-3. **Frontend**: Visit `http://localhost:3000` to see the React application
+---
 
-## Development Workflow
+## License
 
-### Starting the Application
-
-1. **Start PostgreSQL** (if not already running)
-2. **Start the backend**:
-   ```bash
-   cd apps/server
-   # Activate virtual environment if not active
-   venv\Scripts\activate  # Windows
-   # source venv/bin/activate  # macOS/Linux
-   python src/main.py
-   ```
-
-3. **Start the frontend** (in a new terminal):
-   ```bash
-   cd apps/client
-   npm run dev
-   ```
-
-### Making Changes
-
-- **Backend changes**: The FastAPI server will auto-reload when you save files
-- **Frontend changes**: The Vite dev server will hot-reload when you save files
-- **Database schema changes**: Update the schema in `setup_db.py` and run it again
-
-## Project Features
-
-- **File Upload**: Upload NetCDF ARGO data files
-- **AI Search**: Query the data using natural language
-- **Data Visualization**: Interactive charts and maps
-- **Vector Search**: Semantic search capabilities using ChromaDB
-- **Admin Dashboard**: Manage uploaded files and system status
-
-## Troubleshooting
-
-### Common Issues
-
-1. **PostgreSQL Connection Error**:
-   - Ensure PostgreSQL is running
-   - Check your database credentials in `.env`
-   - Verify the database exists by running `setup_db.py`
-
-2. **Python Package Errors**:
-   - Make sure you're using the virtual environment
-   - Try upgrading pip: `pip install --upgrade pip`
-   - Reinstall requirements: `pip install -r requirements.txt`
-
-3. **Node.js Issues**:
-   - Delete `node_modules` and run `npm install` again
-   - Check Node.js version: `node --version` (should be v18+)
-
-4. **Port Already in Use**:
-   - Backend: Change `BACKEND_PORT` in server `.env`
-   - Frontend: Change `FRONTEND_PORT` in client `.env`
+This project is licensed under the MIT License.
